@@ -213,3 +213,64 @@ func TestHoldSetsDisable(t *testing.T) {
 		t.Errorf("spec.approvePlan = %q, want %q", approvePlan, "disable")
 	}
 }
+
+func TestApprovePreservesDestroy(t *testing.T) {
+	const name = "main-sandbox"
+	const planID = "plan-main-49203ac458"
+
+	obj := newTerraform(name, "pt-techne-floor-fixture", map[string]any{
+		"path":    "./main",
+		"destroy": true,
+	}, map[string]any{
+		"plan": map[string]any{"pending": planID},
+	}, nil, nil)
+
+	c := NewClient(fake.NewClientBuilder().WithScheme(newScheme()).WithObjects(obj).Build(), "pt-techne-floor-fixture")
+
+	if err := c.Approve(context.Background(), name, planID, false); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+
+	got, err := c.Workspace(context.Background(), name)
+	if err != nil {
+		t.Fatalf("Workspace() error = %v", err)
+	}
+
+	destroy, found, _ := unstructured.NestedBool(got.Object, "spec", "destroy")
+	if !found || !destroy {
+		t.Errorf("spec.destroy = %t (found %t), want true", destroy, found)
+	}
+
+	approvePlan, _, _ := unstructured.NestedString(got.Object, "spec", "approvePlan")
+	if approvePlan != planID {
+		t.Errorf("spec.approvePlan = %q, want %q", approvePlan, planID)
+	}
+}
+
+func TestSetDestroyClearsApproval(t *testing.T) {
+	const name = "main-sandbox"
+
+	obj := newTerraform(name, "pt-techne-floor-fixture", map[string]any{
+		"path":        "./main",
+		"approvePlan": "plan-main-49203ac458",
+	}, nil, nil, nil)
+
+	c := NewClient(fake.NewClientBuilder().WithScheme(newScheme()).WithObjects(obj).Build(), "pt-techne-floor-fixture")
+
+	if err := c.SetDestroy(context.Background(), name); err != nil {
+		t.Fatalf("SetDestroy() error = %v", err)
+	}
+
+	got, err := c.Workspace(context.Background(), name)
+	if err != nil {
+		t.Fatalf("Workspace() error = %v", err)
+	}
+
+	if destroy, _, _ := unstructured.NestedBool(got.Object, "spec", "destroy"); !destroy {
+		t.Errorf("spec.destroy = false, want true")
+	}
+
+	if _, found, _ := unstructured.NestedString(got.Object, "spec", "approvePlan"); found {
+		t.Errorf("spec.approvePlan should be cleared when destruction is requested")
+	}
+}

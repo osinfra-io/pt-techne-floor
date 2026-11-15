@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/osinfra-io/pt-techne-floor/internal/floor"
 	"github.com/osinfra-io/pt-techne-floor/internal/githubapi"
@@ -451,5 +452,156 @@ func TestReturnToMainNoopWhenOpen(t *testing.T) {
 
 	if branch, _ := gitRepositoryState(t, k); branch != testHeadRef {
 		t.Errorf("branch = %q, want %q", branch, testHeadRef)
+	}
+}
+
+func TestApproveRejectsPlanForAnOlderRevision(t *testing.T) {
+	const olderPlan = "plan-floor-test-7-1111111111"
+
+	k := fake.NewClientBuilder().WithScheme(newScheme()).WithObjects(
+		newGitRepository("main", nil),
+		newTerraform(testPrimary, "", nil),
+		newTerraform(testPlanner, olderPlan, plannerLabels()),
+	).Build()
+
+	var comments []string
+
+	server := newGitHubServer(t, "open", false, &comments)
+
+	_, err := newManager(t, k, server).ApprovePullRequestPlan(context.Background(), testPlanner, olderPlan, false, "brettcurtis")
+
+	var mismatch ErrRevisionMismatch
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("err = %v, want ErrRevisionMismatch", err)
+	}
+
+	if branch, annotations := gitRepositoryState(t, k); branch != "main" || len(annotations) != 0 {
+		t.Errorf("GitRepository was changed: branch %q, annotations %v", branch, annotations)
+	}
+
+	if got := approvePlan(t, k); got != "" {
+		t.Errorf("approvePlan = %q, want empty", got)
+	}
+}
+
+func TestApproveSucceedsWhenCommentFails(t *testing.T) {
+	k := fake.NewClientBuilder().WithScheme(newScheme()).WithObjects(
+		newGitRepository("main", nil),
+		newTerraform(testPrimary, "", nil),
+		newTerraform(testPlanner, testPlanID, plannerLabels()),
+	).Build()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/pulls/7") {
+			_, _ = io.WriteString(w, `{"state":"open","merged":false,"head":{"sha":"`+testHeadSHA+`","ref":"`+testHeadRef+`"}}`)
+
+			return
+		}
+
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fakePlanner(ctx, t, k, testHeadRef, testPlanID)
+
+	plan, err := newManager(t, k, server).ApprovePullRequestPlan(ctx, testPlanner, testPlanID, false, "brettcurtis")
+	if err != nil {
+		t.Fatalf("ApprovePullRequestPlan: %v", err)
+	}
+
+	if plan != testPlanID {
+		t.Errorf("plan = %q, want %q", plan, testPlanID)
+	}
+
+	if got := approvePlan(t, k); got != testPlanID {
+		t.Errorf("approvePlan = %q, want %q", got, testPlanID)
+	}
+}
+
+func TestApproveAcceptsPlanAlreadyPendingOnRetry(t *testing.T) {
+	k := fake.NewClientBuilder().WithScheme(newScheme()).WithObjects(
+		newGitRepository(testHeadRef, map[string]string{"floor.osinfra.io/pull-request": "7"}),
+		newTerraform(testPrimary, testPlanID, nil),
+		newTerraform(testPlanner, testPlanID, plannerLabels()),
+	).Build()
+
+	var comments []string
+
+	server := newGitHubServer(t, "open", false, &comments)
+
+	m := newManager(t, k, server)
+	m.RevisionTimeout = time.Second
+
+	plan, err := m.ApprovePullRequestPlan(context.Background(), testPlanner, testPlanID, false, "brettcurtis")
+	if err != nil {
+		t.Fatalf("ApprovePullRequestPlan: %v", err)
+	}
+
+	if plan != testPlanID {
+		t.Errorf("plan = %q, want %q", plan, testPlanID)
+	}
+
+	if got := approvePlan(t, k); got != testPlanID {
+		t.Errorf("approvePlan = %q, want %q", got, testPlanID)
+	}
+}
+
+func TestReturnToMainKeepsNewerSelection(t *testing.T) {
+	const newerBranch = "floor-test-9"
+
+	var repointed bool
+
+	k := fake.NewClientBuilder().WithScheme(newScheme()).WithObjects(
+		newGitRepository(testHeadRef, map[string]string{"floor.osinfra.io/pull-request": "7"}),
+	).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if err := c.Get(ctx, key, obj, opts...); err != nil {
+				return err
+			}
+
+			if repointed {
+				return nil
+			}
+
+			repointed = true
+
+			// A concurrent approval repoints the GitRepository at pull
+			// request 9 after the close check read it.
+			current := obj.DeepCopyObject().(*unstructured.Unstructured)
+
+			if err := unstructured.SetNestedField(current.Object, newerBranch, "spec", "ref", "branch"); err != nil {
+				return err
+			}
+
+			current.SetAnnotations(map[string]string{"floor.osinfra.io/pull-request": "9"})
+
+			return c.Update(ctx, current)
+		},
+	}).Build()
+
+	var comments []string
+
+	server := newGitHubServer(t, "closed", true, &comments)
+
+	returned, err := newManager(t, k, server).ReturnToMainIfClosed(context.Background())
+	if err != nil {
+		t.Fatalf("ReturnToMainIfClosed: %v", err)
+	}
+
+	if returned {
+		t.Error("returned = true, want false on a stale close check")
+	}
+
+	branch, annotations := gitRepositoryState(t, k)
+	if branch != newerBranch {
+		t.Errorf("branch = %q, want %q", branch, newerBranch)
+	}
+
+	if annotations["floor.osinfra.io/pull-request"] != "9" {
+		t.Errorf("annotation = %q, want 9", annotations["floor.osinfra.io/pull-request"])
 	}
 }

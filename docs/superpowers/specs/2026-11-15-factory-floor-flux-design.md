@@ -39,8 +39,8 @@ Replace the GitHub Actions OpenTofu pipelines (`sandbox.yml`, `non-production.ym
 - A new commit on `main` in a watched repo produces plans for the affected workspaces, in dependency order, with no GitHub Actions run.
 - Every open PR gets a plan against sandbox state posted as a PR comment within a minute of pushing, for the workspaces it touches only.
 - Approving a PR's sandbox plan applies that PR into the one shared sandbox — the same proving ground `sandbox.yml` applies to today. Seeing another developer's changes in your plan is the intended signal to talk to them.
-- Approval is an explicit act by an authenticated platform-team member, bound to a specific plan of a specific commit. Any new commit invalidates it.
-- Apply uses exactly the saved plan that was approved.
+- Approval is an explicit act by an authenticated platform-team member, bound to a specific commit. Any new commit invalidates it.
+- Apply is bound to the approved **commit**, not to a byte-exact saved plan: tofu-controller re-plans at that commit immediately before a manual apply, and refuses to apply only when the plan id — branch plus commit — has changed.
 - What ran, what is waiting on whom, and why, is readable from a CLI via the API.
 - The first milestone runs end to end on the Docker Desktop local integration stack.
 
@@ -72,7 +72,7 @@ Replace the GitHub Actions OpenTofu pipelines (`sandbox.yml`, `non-production.ym
 | --- | --- | --- | --- |
 | A | **Custom operator** (`2026-11-14` design): Run/Step/Approval CRDs, Substrate actors, kagent narrator | Full control, platform as its own workload; months of controller code before the first apply; reinvents plan storage, approval binding, PR previews, drift | Dropped after the Flux evaluation |
 | B | **Atlantis / Burrito / Terramate** | Atlantis is PR-comment-driven and GitHub-shaped — the interface we are leaving; Burrito is young; Terramate still runs on Actions | Dropped |
-| C | **Flux Operator + tofu-controller** as engine, thin custom layer | Proven in spike: approval by plan hash, invalidation on new commit, Branch Planner PR comments, per-PR sandbox via ResourceSet, encrypted state via `TF_ENCRYPTION`. Costs: tofu-controller is a smaller community project; tf-runner RBAC and secret delivery need care | **Chosen** |
+| C | **Flux Operator + tofu-controller** as engine, thin custom layer | Proven in spike: approval by plan id, invalidation on new commit, Branch Planner PR comments, per-PR sandbox via ResourceSet, encrypted state via `TF_ENCRYPTION`. Costs: tofu-controller is a smaller community project; tf-runner RBAC and secret delivery need care | **Chosen** |
 
 ## 5. Design
 
@@ -134,10 +134,11 @@ Not in v1: per-PR throwaway environments via Flux Operator `ResourceSet` (proven
 
 ### 5.4 Approval model
 
-The engine's native model is sufficient:
+The engine's native model is **commit-level approval**, which is what v1 adopts:
 
 - `status.plan.pending` = `plan-<branch>-<10 chars of commit>`; a new commit or spec change clears it.
 - Approval = setting `spec.approvePlan` to that exact value. A stale value is inert (spike-proven).
+- The plan id is derived from the revision alone (`api/planid`, v0.16.6). Before a manual apply, tofu-controller re-plans at that revision (`controllers/tf_controller_reconcile.go`) and saves the fresh plan under the same revision-derived id (`controllers/tf_controller_plan.go`), applying it when the id still matches. A state or spec change at the same commit can therefore change the actions that apply without changing the approved id. Binding the approval to the plan's content (a hash of the saved plan) is possible future hardening; v1 relies on the commit binding plus the destroy guard below.
 - After a failed apply the pending plan is empty; `approvePlan: replan` forces a new plan.
 
 `floor-api` is the **only** writer of `spec.approvePlan` in non-local environments (RBAC: Flux's kustomize-controller is configured to ignore that field via `fluxcd.io/ignore` or server-side-apply field ownership — builder to confirm the mechanism). Approval is recorded as a Kubernetes `Event` on the object with the authentik identity, and mirrored to the PR comment.

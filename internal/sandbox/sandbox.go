@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -126,6 +127,15 @@ func (m *Manager) ApprovePullRequestPlan(ctx context.Context, plannerName, planI
 		return "", fmt.Errorf("pull request %d head revision %q is too short", planner.PullRequest, pr.HeadSHA)
 	}
 
+	revisionPrefix := pr.HeadSHA[:revisionPrefixLength]
+
+	// The pull request can receive a new commit before the planner
+	// refreshes its plan, so the plan the human read must be for the head
+	// revision; otherwise they would approve unreviewed changes.
+	if !strings.HasSuffix(planID, revisionPrefix) {
+		return "", ErrRevisionMismatch{Expected: revisionPrefix, Observed: planID}
+	}
+
 	// The primary normally carries an unapproved plan for main, which
 	// survives the repoint until the planner re-plans at the pull request
 	// head; it is a stale observation, not a revision mismatch.
@@ -136,11 +146,11 @@ func (m *Manager) ApprovePullRequestPlan(ctx context.Context, plannerName, planI
 
 	stalePlan := primary.PendingPlan
 
-	if err := m.applyGitRepository(ctx, pr.HeadRef, strconv.Itoa(planner.PullRequest)); err != nil {
+	if err := m.repointGitRepository(ctx, pr.HeadRef, strconv.Itoa(planner.PullRequest)); err != nil {
 		return "", err
 	}
 
-	pendingPlan, err := m.waitForRevision(ctx, planner.PrimaryResource, pr.HeadSHA[:revisionPrefixLength], stalePlan)
+	pendingPlan, err := m.waitForRevision(ctx, planner.PrimaryResource, revisionPrefix, stalePlan)
 	if err != nil {
 		return "", err
 	}
@@ -154,7 +164,13 @@ func (m *Manager) ApprovePullRequestPlan(ctx context.Context, plannerName, planI
 		commentMarker, pendingPlan, planner.PrimaryResource, approver, pr.HeadSHA,
 	)
 
-	return pendingPlan, m.github.UpsertComment(ctx, planner.PullRequest, commentMarker, body)
+	// The approval is already written, so the comment is post-approval
+	// telemetry: a failure is logged, not returned.
+	if err := m.github.UpsertComment(ctx, planner.PullRequest, commentMarker, body); err != nil {
+		log.Printf("commenting on pull request %d: %v", planner.PullRequest, err)
+	}
+
+	return pendingPlan, nil
 }
 
 // ReturnToMainIfClosed points the sandbox GitRepository back at main when
@@ -184,15 +200,43 @@ func (m *Manager) ReturnToMainIfClosed(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
-	if err := m.applyGitRepository(ctx, mainBranch, ""); err != nil {
-		return false, err
-	}
+	// The pull request check is a round trip to GitHub, so an approval may
+	// have repointed the GitRepository at another pull request meanwhile.
+	// The branch change and the annotation removal are one patch guarded by
+	// the resource version observed above; a conflict means a newer
+	// selection won and the next poll re-reads it.
+	if err := m.returnToMain(ctx, repo); err != nil {
+		if apierrors.IsConflict(err) {
+			return false, nil
+		}
 
-	if err := m.removePullRequestAnnotation(ctx); err != nil {
 		return false, err
 	}
 
 	return true, nil
+}
+
+// returnToMain points the sandbox GitRepository back at main and removes
+// the pull request annotation in a single optimistically locked patch
+// built from observed.
+func (m *Manager) returnToMain(ctx context.Context, observed *unstructured.Unstructured) error {
+	patch := client.MergeFromWithOptions(observed.DeepCopy(), client.MergeFromWithOptimisticLock{})
+
+	updated := observed.DeepCopy()
+
+	if err := unstructured.SetNestedField(updated.Object, mainBranch, "spec", "ref", "branch"); err != nil {
+		return fmt.Errorf("setting GitRepository %q branch: %w", m.gitRepository, err)
+	}
+
+	annotations := updated.GetAnnotations()
+	delete(annotations, annotationPullRequest)
+	updated.SetAnnotations(annotations)
+
+	if err := m.k.Patch(ctx, updated, patch); err != nil {
+		return fmt.Errorf("returning GitRepository %q to %s: %w", m.gitRepository, mainBranch, err)
+	}
+
+	return nil
 }
 
 // Run calls ReturnToMainIfClosed every interval until ctx is cancelled.
@@ -216,7 +260,8 @@ func (m *Manager) Run(ctx context.Context, every time.Duration) {
 // waitForRevision polls the primary Terraform object until it has a
 // pending plan for the given revision prefix, returning that plan id.
 // stalePlan, the pending plan read before the GitRepository was
-// repointed, is treated as "not re-planned yet" rather than a mismatch.
+// repointed, is treated as "not re-planned yet" only when it is for a
+// different revision: a retry can find the right plan already pending.
 func (m *Manager) waitForRevision(ctx context.Context, primary, revisionPrefix, stalePlan string) (string, error) {
 	deadline := time.Now().Add(m.RevisionTimeout)
 
@@ -229,12 +274,14 @@ func (m *Manager) waitForRevision(ctx context.Context, primary, revisionPrefix, 
 			return "", err
 		}
 
-		if ws.PendingPlan != "" && ws.PendingPlan != stalePlan {
-			if !strings.HasSuffix(ws.PendingPlan, revisionPrefix) {
-				return "", ErrRevisionMismatch{Expected: revisionPrefix, Observed: ws.PendingPlan}
+		if ws.PendingPlan != "" {
+			if strings.HasSuffix(ws.PendingPlan, revisionPrefix) {
+				return ws.PendingPlan, nil
 			}
 
-			return ws.PendingPlan, nil
+			if ws.PendingPlan != stalePlan {
+				return "", ErrRevisionMismatch{Expected: revisionPrefix, Observed: ws.PendingPlan}
+			}
 		}
 
 		if time.Now().After(deadline) {
@@ -261,19 +308,16 @@ func (m *Manager) getGitRepository(ctx context.Context) (*unstructured.Unstructu
 	return repo, nil
 }
 
-// applyGitRepository server-side applies the branch, and the pull request
-// annotation when pullRequest is non-empty, forcing ownership under the
-// floor-api field manager.
-func (m *Manager) applyGitRepository(ctx context.Context, branch, pullRequest string) error {
+// repointGitRepository server-side applies the branch and the pull
+// request annotation, forcing ownership under the floor-api field
+// manager.
+func (m *Manager) repointGitRepository(ctx context.Context, branch, pullRequest string) error {
 	metadata := map[string]any{
 		"name":      m.gitRepository,
 		"namespace": m.namespace,
-	}
-
-	if pullRequest != "" {
-		metadata["annotations"] = map[string]any{
+		"annotations": map[string]any{
 			annotationPullRequest: pullRequest,
-		}
+		},
 	}
 
 	patch := &unstructured.Unstructured{
@@ -291,26 +335,6 @@ func (m *Manager) applyGitRepository(ctx context.Context, branch, pullRequest st
 
 	if err := m.k.Apply(ctx, client.ApplyConfigurationFromUnstructured(patch), client.FieldOwner(fieldOwner), client.ForceOwnership); err != nil {
 		return fmt.Errorf("applying GitRepository %q: %w", m.gitRepository, err)
-	}
-
-	return nil
-}
-
-// removePullRequestAnnotation drops the pull request annotation with a
-// JSON merge patch; server-side apply only releases fields floor-api
-// already owns, so the removal is made explicit.
-func (m *Manager) removePullRequestAnnotation(ctx context.Context) error {
-	repo, err := m.getGitRepository(ctx)
-	if err != nil {
-		return err
-	}
-
-	patch := client.RawPatch(types.MergePatchType, []byte(
-		fmt.Sprintf(`{"metadata":{"annotations":{%q:null}}}`, annotationPullRequest),
-	))
-
-	if err := m.k.Patch(ctx, repo, patch); err != nil {
-		return fmt.Errorf("removing %s annotation from GitRepository %q: %w", annotationPullRequest, m.gitRepository, err)
 	}
 
 	return nil

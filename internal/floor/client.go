@@ -126,37 +126,29 @@ func (c *Client) Replan(ctx context.Context, name string) error {
 	return c.SetApprovePlan(ctx, name, "replan")
 }
 
-// SetApprovePlan server-side applies spec.approvePlan on the named
-// Terraform object, forcing ownership under the "floor-api" field manager.
+// SetApprovePlan patches spec.approvePlan on the named Terraform object,
+// leaving every other field, including spec.destroy, untouched.
 func (c *Client) SetApprovePlan(ctx context.Context, name, value string) error {
-	return c.applySpecField(ctx, name, "approvePlan", value)
+	return c.mergePatch(ctx, name, fmt.Sprintf(`{"spec":{"approvePlan":%q}}`, value))
 }
 
-// SetDestroy server-side applies spec.destroy: true on the named Terraform
-// object.
+// SetDestroy patches spec.destroy: true on the named Terraform object and
+// clears spec.approvePlan in the same patch, so an approval granted for an
+// earlier plan cannot apply the destruction.
 func (c *Client) SetDestroy(ctx context.Context, name string) error {
-	return c.applySpecField(ctx, name, "destroy", true)
+	return c.mergePatch(ctx, name, `{"spec":{"approvePlan":null,"destroy":true}}`)
 }
 
-// applySpecField server-side applies a single spec field on the named
-// Terraform object, forcing ownership under the "floor-api" field manager.
-func (c *Client) applySpecField(ctx context.Context, name, field string, value any) error {
-	patch := &unstructured.Unstructured{
-		Object: map[string]any{
-			"apiVersion": TerraformGVK.GroupVersion().String(),
-			"kind":       TerraformGVK.Kind,
-			"metadata": map[string]any{
-				"name":      name,
-				"namespace": c.namespace,
-			},
-			"spec": map[string]any{
-				field: value,
-			},
-		},
-	}
+// mergePatch applies a field-targeted JSON merge patch to the named
+// Terraform object.
+func (c *Client) mergePatch(ctx context.Context, name, patch string) error {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(TerraformGVK)
+	obj.SetName(name)
+	obj.SetNamespace(c.namespace)
 
-	if err := c.k.Apply(ctx, client.ApplyConfigurationFromUnstructured(patch), client.FieldOwner("floor-api"), client.ForceOwnership); err != nil {
-		return fmt.Errorf("patching Terraform object %q spec.%s: %w", name, field, err)
+	if err := c.k.Patch(ctx, obj, client.RawPatch(types.MergePatchType, []byte(patch)), client.FieldOwner("floor-api")); err != nil {
+		return fmt.Errorf("patching Terraform object %q with %s: %w", name, patch, err)
 	}
 
 	return nil
