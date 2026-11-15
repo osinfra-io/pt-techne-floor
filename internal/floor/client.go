@@ -115,9 +115,10 @@ func (c *Client) Approve(ctx context.Context, name, planID string, acknowledgeDe
 	}
 
 	// A spec change, such as a destroy request, leaves the old pending plan
-	// visible until the controller observes the new generation.
-	if observed, _, _ := unstructured.NestedInt64(obj.Object, "status", "observedGeneration"); observed != obj.GetGeneration() {
-		return fmt.Errorf("%w: generation %d, observed %d", ErrPlanStale, obj.GetGeneration(), observed)
+	// visible until a new plan is made. observedGeneration is not enough: it
+	// also advances when the object is marked not ready without re-planning.
+	if planned, _, _ := unstructured.NestedInt64(obj.Object, "status", "lastPlannedGeneration"); planned != obj.GetGeneration() {
+		return fmt.Errorf("%w: generation %d, planned %d", ErrPlanStale, obj.GetGeneration(), planned)
 	}
 
 	// Including the validated resourceVersion makes the patch fail with a

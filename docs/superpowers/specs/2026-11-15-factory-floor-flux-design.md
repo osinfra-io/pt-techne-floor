@@ -105,7 +105,7 @@ pt-logos/main-production
 
 Cross-repo data still flows through `pt-arche-core-helpers` remote state, unchanged. `dependsOn` only orders; it carries no outputs in v1.
 
-Environment promotion: every environment's objects track `main`. `production` objects `dependsOn` their non-production counterpart, so a production plan for commit N is only generated once non-production has applied N. A newer commit replaces the pending plan and production waits for non-production to catch up — the same "production runs after non-production on the same commit" semantics the Actions workflows have today, with the explicit approval acting as the soak gate. No promotion branch, tag or verb.
+Environment promotion: every environment's objects track `main`. tofu-controller resolves `dependsOn` through its own cluster's Kubernetes client, and each environment's floor runs on a different Pneuma cluster (§5.9), so `dependsOn` orders objects **within one floor only**; it cannot make production wait for non-production. In v1 the cross-environment gate is the approver: production plans for commit N appear as soon as `main` reaches N, and the approver applies them only after non-production has applied N (visible from the non-production floor's `list_workspaces`), with `hold` available to freeze production. Machine enforcement needs an explicit cross-cluster mechanism, for example `floor-api` in the production floor refusing approval until the non-production floor reports `lastAppliedRevision` equal to the plan's revision. That is an open question and not in v1.
 
 `floor-api` exposes `hold(name)` / `unhold(name)`, which set `approvePlan: disable` and clear it, so production (or anything) can be frozen during an incident without touching git. If "ship N to production while N+1 soaks" is ever needed, pin `ref.commit` on the production `GitRepository` in the floor config repo; that is a config-repo-only change and is not in v1.
 
@@ -228,9 +228,9 @@ Locally, docker-desktop plays the Pneuma cluster: the floor runs there and the P
 - Flux and tofu-controller run off-mesh; the floor's own services run on-mesh.
 - Pneuma is the management cluster and is self-hosting; one floor per environment on that environment's Pneuma cluster; fleet clusters run no Flux.
 - Terraform object names = today's workspace names; state keys unchanged.
-- `dependsOn` replaces both `needs:` and cross-repo workflow triggers; production `dependsOn` non-production.
+- `dependsOn` replaces `needs:` and cross-repo workflow triggers within one floor; cross-environment promotion is approver-gated in v1 because each environment's floor runs on its own cluster.
 - One shared sandbox per repo as a proving ground; Branch Planner plans every PR against it (affected objects only); approving a PR plan repoints sandbox at the PR; no per-PR environments.
-- Every environment tracks `main`; production `dependsOn` non-production; no promotion mechanism in v1, only `hold`/`unhold`.
+- Every environment tracks `main`; no machine-enforced promotion in v1, only approver judgement plus `hold`/`unhold`.
 - `floor-api` is the only writer of `approvePlan`; approvals are Events, not a database.
 - OpenBao Secrets Operator over the agent injector for runner secrets; all provider secrets come from OpenBao, not Actions secrets.
 - Floor objects live in one central config repo reconciled by Flux Kustomization, never by OpenTofu.

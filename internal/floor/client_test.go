@@ -279,8 +279,9 @@ func TestApproveRejectsPlanNotReflectingSpec(t *testing.T) {
 	const name = "main-sandbox"
 
 	obj := newTerraform(name, "pt-techne-floor-fixture", map[string]any{"path": "./main", "destroy": true}, map[string]any{
-		"plan":               map[string]any{"pending": "plan-main-49203ac458"},
-		"observedGeneration": int64(1),
+		"plan":                  map[string]any{"pending": "plan-main-49203ac458"},
+		"observedGeneration":    int64(2),
+		"lastPlannedGeneration": int64(1),
 	}, nil, nil)
 	obj.SetGeneration(2)
 
