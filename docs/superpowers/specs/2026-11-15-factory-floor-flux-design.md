@@ -117,7 +117,7 @@ Two engine features implement it:
 
 **Plans for every PR — Branch Planner.** For each open PR, tofu-controller's Branch Planner creates a plan-only copy of each watched sandbox `Terraform` object at the PR head, plans it against the **shared sandbox state**, and posts the plan as a PR comment. Because all PRs plan against the same state, a plan naturally includes anything another PR has applied there and this branch lacks. `!replan` re-plans.
 
-Branch Planner has no change detection and would plan every listed object on every PR (~20 runner pods for a one-line Pneuma change). `floor-api` therefore maintains the Branch Planner object list per PR: an object is **affected** if the PR touches its `path`, a `shared/` file it symlinks, or bumps the SHA of a `pt-arche-*` module it pins. Unaffected objects are not planned and the PR comment says so.
+Branch Planner scopes plans with `spec.branchPlanner.enablePathScope`, which only plans an object when the PR touches its `spec.path`. This milestone relies on that built-in scoping; `floor-api` adds detection for `shared/` symlink targets and `pt-arche-*` SHA bumps after this milestone.
 
 **Applying a PR into sandbox — approval repoints the source.** There is no separate "checkout" step. When an approver `approve`s a Branch Planner plan for a PR:
 
