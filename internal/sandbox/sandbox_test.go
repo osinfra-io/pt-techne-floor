@@ -242,7 +242,7 @@ func TestApproveRepointsThenApproves(t *testing.T) {
 
 	fakePlanner(ctx, t, k, testHeadRef, testPlanID)
 
-	if err := newManager(t, k, server).ApprovePullRequestPlan(ctx, testPlanner, testPlanID, false, "brettcurtis"); err != nil {
+	if _, err := newManager(t, k, server).ApprovePullRequestPlan(ctx, testPlanner, testPlanID, false, "brettcurtis"); err != nil {
 		t.Fatalf("ApprovePullRequestPlan: %v", err)
 	}
 
@@ -280,7 +280,7 @@ func TestApproveStopsOnRevisionMismatch(t *testing.T) {
 
 	fakePlanner(ctx, t, k, testHeadRef, "plan-floor-test-7-9999999999")
 
-	err := newManager(t, k, server).ApprovePullRequestPlan(ctx, testPlanner, testPlanID, false, "brettcurtis")
+	_, err := newManager(t, k, server).ApprovePullRequestPlan(ctx, testPlanner, testPlanID, false, "brettcurtis")
 
 	var mismatch ErrRevisionMismatch
 	if !errors.As(err, &mismatch) {
@@ -304,6 +304,75 @@ func TestApproveStopsOnRevisionMismatch(t *testing.T) {
 	}
 }
 
+func TestApproveIgnoresStalePendingPlan(t *testing.T) {
+	const stalePlan = "plan-main-0123456789"
+
+	k := fake.NewClientBuilder().WithScheme(newScheme()).WithObjects(
+		newGitRepository("main", nil),
+		newTerraform(testPrimary, stalePlan, nil),
+		newTerraform(testPlanner, testPlanID, plannerLabels()),
+	).Build()
+
+	var comments []string
+
+	server := newGitHubServer(t, "open", false, &comments)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fakePlanner(ctx, t, k, testHeadRef, testPlanID)
+
+	plan, err := newManager(t, k, server).ApprovePullRequestPlan(ctx, testPlanner, testPlanID, false, "brettcurtis")
+	if err != nil {
+		t.Fatalf("ApprovePullRequestPlan: %v", err)
+	}
+
+	if plan != testPlanID {
+		t.Errorf("plan = %q, want %q", plan, testPlanID)
+	}
+
+	if got := approvePlan(t, k); got != testPlanID {
+		t.Errorf("approvePlan = %q, want %q", got, testPlanID)
+	}
+}
+
+func TestApproveStopsOnRevisionMismatchAfterStalePendingPlan(t *testing.T) {
+	const (
+		stalePlan     = "plan-main-0123456789"
+		unrelatedPlan = "plan-floor-test-7-9999999999"
+	)
+
+	k := fake.NewClientBuilder().WithScheme(newScheme()).WithObjects(
+		newGitRepository("main", nil),
+		newTerraform(testPrimary, stalePlan, nil),
+		newTerraform(testPlanner, testPlanID, plannerLabels()),
+	).Build()
+
+	var comments []string
+
+	server := newGitHubServer(t, "open", false, &comments)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fakePlanner(ctx, t, k, testHeadRef, unrelatedPlan)
+
+	_, err := newManager(t, k, server).ApprovePullRequestPlan(ctx, testPlanner, testPlanID, false, "brettcurtis")
+
+	var mismatch ErrRevisionMismatch
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("err = %v, want ErrRevisionMismatch", err)
+	}
+
+	if mismatch.Observed != unrelatedPlan {
+		t.Errorf("observed = %q, want %q", mismatch.Observed, unrelatedPlan)
+	}
+
+	if got := approvePlan(t, k); got != "" {
+		t.Errorf("approvePlan = %q, want empty", got)
+	}
+}
+
 func TestSecondApprovalOverwrites(t *testing.T) {
 	k := fake.NewClientBuilder().WithScheme(newScheme()).WithObjects(
 		newGitRepository("floor-test-3", map[string]string{"floor.osinfra.io/pull-request": "3"}),
@@ -320,7 +389,7 @@ func TestSecondApprovalOverwrites(t *testing.T) {
 
 	fakePlanner(ctx, t, k, testHeadRef, testPlanID)
 
-	if err := newManager(t, k, server).ApprovePullRequestPlan(ctx, testPlanner, testPlanID, false, "brettcurtis"); err != nil {
+	if _, err := newManager(t, k, server).ApprovePullRequestPlan(ctx, testPlanner, testPlanID, false, "brettcurtis"); err != nil {
 		t.Fatalf("ApprovePullRequestPlan: %v", err)
 	}
 

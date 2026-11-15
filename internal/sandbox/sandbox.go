@@ -93,49 +93,60 @@ func NewManager(fl *floor.Client, gh *githubapi.Client, k client.Client, namespa
 // ApprovePullRequestPlan approves planID, which a human read on the
 // planner Terraform object, by repointing the sandbox GitRepository at
 // the pull request head, waiting for the primary Terraform object to plan
-// that same revision, and approving the primary's pending plan.
-func (m *Manager) ApprovePullRequestPlan(ctx context.Context, plannerName, planID string, acknowledgeDestroys bool, approver string) error {
+// that same revision, and approving the primary's pending plan. It
+// returns the primary's plan id that was approved.
+func (m *Manager) ApprovePullRequestPlan(ctx context.Context, plannerName, planID string, acknowledgeDestroys bool, approver string) (string, error) {
 	planner, err := m.floor.Get(ctx, plannerName)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	if err := floor.ValidateApproval(planner, planID, acknowledgeDestroys); err != nil {
-		return err
+		return "", err
 	}
 
 	if planner.PullRequest == 0 {
-		return fmt.Errorf("Terraform object %q has no pull request label", plannerName)
+		return "", fmt.Errorf("terraform object %q has no pull request label", plannerName)
 	}
 
 	if planner.PrimaryResource == "" {
-		return fmt.Errorf("Terraform object %q has no primary resource label", plannerName)
+		return "", fmt.Errorf("terraform object %q has no primary resource label", plannerName)
 	}
 
 	pr, err := m.github.PullRequest(ctx, planner.PullRequest)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	if pr.State != "open" || pr.Merged {
-		return fmt.Errorf("%w: pull request %d is %q (merged: %t)", ErrPullRequestNotOpen, planner.PullRequest, pr.State, pr.Merged)
+		return "", fmt.Errorf("%w: pull request %d is %q (merged: %t)", ErrPullRequestNotOpen, planner.PullRequest, pr.State, pr.Merged)
 	}
 
 	if len(pr.HeadSHA) < revisionPrefixLength {
-		return fmt.Errorf("pull request %d head revision %q is too short", planner.PullRequest, pr.HeadSHA)
+		return "", fmt.Errorf("pull request %d head revision %q is too short", planner.PullRequest, pr.HeadSHA)
 	}
+
+	// The primary normally carries an unapproved plan for main, which
+	// survives the repoint until the planner re-plans at the pull request
+	// head; it is a stale observation, not a revision mismatch.
+	primary, err := m.floor.Get(ctx, planner.PrimaryResource)
+	if err != nil {
+		return "", err
+	}
+
+	stalePlan := primary.PendingPlan
 
 	if err := m.applyGitRepository(ctx, pr.HeadRef, strconv.Itoa(planner.PullRequest)); err != nil {
-		return err
+		return "", err
 	}
 
-	pendingPlan, err := m.waitForRevision(ctx, planner.PrimaryResource, pr.HeadSHA[:revisionPrefixLength])
+	pendingPlan, err := m.waitForRevision(ctx, planner.PrimaryResource, pr.HeadSHA[:revisionPrefixLength], stalePlan)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	if err := m.floor.Approve(ctx, planner.PrimaryResource, pendingPlan, acknowledgeDestroys); err != nil {
-		return err
+		return "", err
 	}
 
 	body := fmt.Sprintf(
@@ -143,7 +154,7 @@ func (m *Manager) ApprovePullRequestPlan(ctx context.Context, plannerName, planI
 		commentMarker, pendingPlan, planner.PrimaryResource, approver, pr.HeadSHA,
 	)
 
-	return m.github.UpsertComment(ctx, planner.PullRequest, commentMarker, body)
+	return pendingPlan, m.github.UpsertComment(ctx, planner.PullRequest, commentMarker, body)
 }
 
 // ReturnToMainIfClosed points the sandbox GitRepository back at main when
@@ -177,7 +188,11 @@ func (m *Manager) ReturnToMainIfClosed(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	return true, m.removePullRequestAnnotation(ctx)
+	if err := m.removePullRequestAnnotation(ctx); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 // Run calls ReturnToMainIfClosed every interval until ctx is cancelled.
@@ -200,7 +215,9 @@ func (m *Manager) Run(ctx context.Context, every time.Duration) {
 
 // waitForRevision polls the primary Terraform object until it has a
 // pending plan for the given revision prefix, returning that plan id.
-func (m *Manager) waitForRevision(ctx context.Context, primary, revisionPrefix string) (string, error) {
+// stalePlan, the pending plan read before the GitRepository was
+// repointed, is treated as "not re-planned yet" rather than a mismatch.
+func (m *Manager) waitForRevision(ctx context.Context, primary, revisionPrefix, stalePlan string) (string, error) {
 	deadline := time.Now().Add(m.RevisionTimeout)
 
 	ticker := time.NewTicker(m.PollInterval)
@@ -212,7 +229,7 @@ func (m *Manager) waitForRevision(ctx context.Context, primary, revisionPrefix s
 			return "", err
 		}
 
-		if ws.PendingPlan != "" {
+		if ws.PendingPlan != "" && ws.PendingPlan != stalePlan {
 			if !strings.HasSuffix(ws.PendingPlan, revisionPrefix) {
 				return "", ErrRevisionMismatch{Expected: revisionPrefix, Observed: ws.PendingPlan}
 			}
@@ -272,8 +289,8 @@ func (m *Manager) applyGitRepository(ctx context.Context, branch, pullRequest st
 		},
 	}
 
-	if err := m.k.Patch(ctx, patch, client.Apply, client.FieldOwner(fieldOwner), client.ForceOwnership); err != nil {
-		return fmt.Errorf("patching GitRepository %q: %w", m.gitRepository, err)
+	if err := m.k.Apply(ctx, client.ApplyConfigurationFromUnstructured(patch), client.FieldOwner(fieldOwner), client.ForceOwnership); err != nil {
+		return fmt.Errorf("applying GitRepository %q: %w", m.gitRepository, err)
 	}
 
 	return nil

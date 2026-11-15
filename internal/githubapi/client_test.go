@@ -60,12 +60,12 @@ func TestUpsertCommentEditsExisting(t *testing.T) {
 	)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet:
+		switch r.Method {
+		case http.MethodGet:
 			listPath = r.URL.Path
 
 			_, _ = io.WriteString(w, `[{"id":1,"body":"unrelated"},{"id":2,"body":"<!-- floor:sandbox -->\nold"}]`)
-		case r.Method == http.MethodPatch:
+		case http.MethodPatch:
 			editPath = r.URL.Path
 
 			var body struct {
@@ -77,7 +77,7 @@ func TestUpsertCommentEditsExisting(t *testing.T) {
 			edited = body.Body
 
 			_, _ = io.WriteString(w, `{"id":2}`)
-		case r.Method == http.MethodPost:
+		case http.MethodPost:
 			created = true
 
 			_, _ = io.WriteString(w, `{"id":3}`)

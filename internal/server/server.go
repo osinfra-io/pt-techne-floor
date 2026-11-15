@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -101,7 +102,7 @@ func New(fl *floor.Client, sb *sandbox.Manager, recorder record.EventRecorder, a
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "approve",
-		Description: "Approve a workspace's pending plan. Pull request plans are approved on the primary workspace after the sandbox is repointed at the pull request head.",
+		Description: "Approve a workspace's pending plan. Pull request plans are approved on the primary workspace after the sandbox is repointed at the pull request head; that can take up to the revision timeout (180s) while the planner re-plans at the pull request head, and the call is safe to retry.",
 		Annotations: &mcp.ToolAnnotations{Title: "Approve a plan"},
 	}, t.approve)
 
@@ -247,10 +248,12 @@ func (t *tools) approve(ctx context.Context, _ *mcp.CallToolRequest, in approveI
 	// A planner object only ever plans; its approval is carried out on the
 	// primary workspace once the sandbox points at the pull request head.
 	applied := in.Name
+	approvedPlan := in.PlanID
+
 	if ws.PullRequest != 0 {
 		applied = ws.PrimaryResource
 
-		err = t.sandbox.ApprovePullRequestPlan(ctx, in.Name, in.PlanID, in.AcknowledgeDestroys, identity.User)
+		approvedPlan, err = t.sandbox.ApprovePullRequestPlan(ctx, in.Name, in.PlanID, in.AcknowledgeDestroys, identity.User)
 	} else {
 		err = t.floor.Approve(ctx, in.Name, in.PlanID, in.AcknowledgeDestroys)
 	}
@@ -259,12 +262,14 @@ func (t *tools) approve(ctx context.Context, _ *mcp.CallToolRequest, in approveI
 		return nil, approveOutput{}, approvalError(in.Name, err)
 	}
 
-	if err := t.event(ctx, applied, "Approved", "%s approved %s", identity.User, in.PlanID); err != nil {
-		return nil, approveOutput{}, err
+	// The approval is the contract and the apply is already starting; the
+	// Event is telemetry, so a failure to record it is logged, not returned.
+	if err := t.event(ctx, applied, "Approved", "%s approved %s", identity.User, approvedPlan); err != nil {
+		log.Printf("recording Approved event for %q: %v", applied, err)
 	}
 
 	return nil, approveOutput{
-		Message: fmt.Sprintf("plan %s was approved by %s; tofu-controller applies %s next", in.PlanID, identity.User, applied),
+		Message: fmt.Sprintf("plan %s was approved by %s; tofu-controller applies %s next", approvedPlan, identity.User, applied),
 	}, nil
 }
 

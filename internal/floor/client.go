@@ -155,7 +155,7 @@ func (c *Client) applySpecField(ctx context.Context, name, field string, value a
 		},
 	}
 
-	if err := c.k.Patch(ctx, patch, client.Apply, client.FieldOwner("floor-api"), client.ForceOwnership); err != nil {
+	if err := c.k.Apply(ctx, client.ApplyConfigurationFromUnstructured(patch), client.FieldOwner("floor-api"), client.ForceOwnership); err != nil {
 		return fmt.Errorf("patching Terraform object %q spec.%s: %w", name, field, err)
 	}
 

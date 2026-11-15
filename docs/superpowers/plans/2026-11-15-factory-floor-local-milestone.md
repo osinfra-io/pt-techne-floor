@@ -33,6 +33,7 @@
 2. **State backend:** tofu-controller's default `kubernetes` backend (Secret `tfstate-default-<name>` in the object's namespace) instead of an s3 fixture bucket. `TF_ENCRYPTION` with a `pbkdf2` passphrase is still exercised through `runnerPodTemplate.spec.envFrom`.
 3. **Secrets source:** the local milestone writes Secrets directly from `gh auth token` and a generated passphrase in `setup.sh`. OpenBao Secrets Operator is deferred to the cloud milestone.
 4. **GitHub auth:** PAT from `gh auth token` locally (the spec's GitHub App is a cloud concern).
+5. **Destroy guard:** `ErrDestroysUnacknowledged`/`acknowledgeDestroys` are implemented but nothing yet writes `floor.osinfra.io/review: destroys`; the plan-output detector is deferred, so destroy plans are currently approvable without acknowledgement.
 
 ## Review Focus
 

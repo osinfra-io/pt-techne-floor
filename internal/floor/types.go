@@ -21,7 +21,6 @@ var GitRepositoryGVK = schema.GroupVersionKind{
 }
 
 const (
-	labelBranchPlanner   = "infra.weave.works/branch-planner"
 	labelPullRequestID   = "infra.weave.works/pr-id"
 	labelPrimaryResource = "infra.weave.works/primary-resource"
 
