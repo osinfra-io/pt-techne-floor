@@ -31,16 +31,16 @@ const (
 // Workspace is the flattened, typed view of a Terraform object that
 // floor-api exposes to callers.
 type Workspace struct {
-	Name                string
-	Namespace           string
-	Path                string
-	SourceBranch        string
-	Phase               string
-	PendingPlan         string
-	LastAppliedRevision string
-	Review              string
-	Destroy             bool
-	PlanOnly            bool
-	PullRequest         int
-	PrimaryResource     string
+	Name                string `json:"name"`
+	Namespace           string `json:"namespace"`
+	Path                string `json:"path"`
+	SourceBranch        string `json:"sourceBranch"`
+	Phase               string `json:"phase"`
+	PendingPlan         string `json:"pendingPlan"`
+	LastAppliedRevision string `json:"lastAppliedRevision"`
+	Review              string `json:"review"`
+	Destroy             bool   `json:"destroy"`
+	PlanOnly            bool   `json:"planOnly"`
+	PullRequest         int    `json:"pullRequest"`
+	PrimaryResource     string `json:"primaryResource"`
 }
