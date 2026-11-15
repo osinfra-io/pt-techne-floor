@@ -37,7 +37,8 @@ Replace the GitHub Actions OpenTofu pipelines (`sandbox.yml`, `non-production.ym
 ### Goals
 
 - A new commit on `main` in a watched repo produces plans for the affected workspaces, in dependency order, with no GitHub Actions run.
-- A PR checked out into sandbox is planned and, once approved, applied there — the same shared, serial sandbox the Actions `sandbox.yml` applies to today. Its plan is posted to the PR.
+- Every open PR gets a plan against sandbox state posted as a PR comment within a minute of pushing, for the workspaces it touches only.
+- Approving a PR's sandbox plan applies that PR into the one shared sandbox — the same proving ground `sandbox.yml` applies to today. Seeing another developer's changes in your plan is the intended signal to talk to them.
 - Approval is an explicit act by an authenticated platform-team member, bound to a specific plan of a specific commit. Any new commit invalidates it.
 - Apply uses exactly the saved plan that was approved.
 - What ran, what is waiting on whom, and why, is readable from a CLI via the API.
@@ -80,7 +81,7 @@ Replace the GitHub Actions OpenTofu pipelines (`sandbox.yml`, `non-production.ym
 | Component | Source | Role |
 | --- | --- | --- |
 | Flux Operator + FluxInstance | controlplane.io OCI chart | Installs source/kustomize/notification controllers |
-| tofu-controller | flux-iac Helm chart | `Terraform` CRD: plan/approve/apply, `dependsOn`, outputs-to-secret, drift, PR plan comments |
+| tofu-controller (+ Branch Planner) | flux-iac Helm chart | `Terraform` CRD: plan/approve/apply, `dependsOn`, outputs-to-secret, drift, PR plan comments |
 | OpenBao Secrets Operator (or ESO) | existing stack | Renders OpenBao KV into Kubernetes Secrets the runner `envFrom`s (GitHub token, `TF_ENCRYPTION`, local-only backend creds) |
 | `floor-api` | **custom**, Go, this repo | MCP server behind agentgateway/authentik: list/get/approve/reject/replan/explain |
 | floor agent | kagent, existing stack | Read-only narration: plan summaries, anomaly flags, "explain" |
@@ -110,18 +111,26 @@ Environment promotion: every environment's objects track `main`. `production` ob
 
 ### 5.3 Pull requests and sandbox
 
-Sandbox keeps today's semantics: **one shared sandbox per repo, used serially.** `sandbox.yml` today runs on every PR and applies into that single sandbox once a reviewer approves the GitHub environment; the last approved PR is what sandbox reflects. Nothing is stamped per PR — resource names in Logos and Corpus come from the environment, so parallel per-PR copies would collide.
+Sandbox is a **shared proving ground**: one per repo, used serially, applied to by whichever PR was approved most recently. This is today's `sandbox.yml` behaviour and is deliberate — per-PR isolated environments cost real money and time, and a developer seeing changes they did not make in their plan is the cue to talk to the other developer. Resource names in Logos and Corpus come from the environment, so parallel copies would collide anyway.
 
-The engine equivalent: the `*-sandbox` `Terraform` objects are permanent, and their `GitRepository` is pointed at a PR branch instead of `main` when someone wants that PR in sandbox:
+Two engine features implement it:
 
-- `floor-api` `checkout(repo, pr)` sets the sandbox `GitRepository.spec.ref.branch` to the PR's head branch (one PR per repo at a time; a second `checkout` replaces the first and says so). The sandbox objects re-plan at the new revision, the plan is posted to the PR, and approval/apply proceed exactly as in any environment.
-- `floor-api` `release(repo)` points the sandbox `GitRepository` back at `main`. Merging the checked-out PR does this automatically (its branch is gone; `floor-api` sees the PR closed).
-- `sandbox-destroy.yml` becomes `floor-api` `destroy(name)`, which sets `spec.destroy: true` and still requires approval of the destroy plan.
+**Plans for every PR — Branch Planner.** For each open PR, tofu-controller's Branch Planner creates a plan-only copy of each watched sandbox `Terraform` object at the PR head, plans it against the **shared sandbox state**, and posts the plan as a PR comment. Because all PRs plan against the same state, a plan naturally includes anything another PR has applied there and this branch lacks. `!replan` re-plans.
 
-Not in v1, recorded for later:
+Branch Planner has no change detection and would plan every listed object on every PR (~20 runner pods for a one-line Pneuma change). `floor-api` therefore maintains the Branch Planner object list per PR: an object is **affected** if the PR touches its `path`, a `shared/` file it symlinks, or bumps the SHA of a `pt-arche-*` module it pins. Unaffected objects are not planned and the PR comment says so.
 
-- **Branch Planner** (plan-only comments for every open PR). Dropped for v1 because it plans every listed object on every PR (~20 runner pods per Pneuma PR) with no change detection; a PR's plan is obtained by checking it out. If it is wanted later, pair it with a change-detection step in `floor-api` (object affected if the PR touches its `path`, a `shared/` file it symlinks, or bumps a `pt-arche-*` SHA it pins).
-- **Per-PR throwaway sandboxes** via Flux Operator `ResourceSet` (proven in the spike). Only safe for namespaced Pneuma add-on workspaces; revisit if parallel sandbox work becomes a real need.
+**Applying a PR into sandbox — approval repoints the source.** There is no separate "checkout" step. When an approver `approve`s a Branch Planner plan for a PR:
+
+1. `floor-api` sets the repo's sandbox `GitRepository.spec.ref.branch` to the PR head branch.
+2. The permanent sandbox `Terraform` objects re-plan at that revision. `floor-api` compares the new plan ID's revision with the approved PR head; if they match it sets `approvePlan`, otherwise it stops and reports (someone pushed in between).
+3. Apply proceeds as in every environment. Last approved PR wins.
+4. When that PR merges or closes, `floor-api` points the sandbox `GitRepository` back at `main` and sandbox re-plans at `main` for approval.
+
+`sandbox-destroy.yml` becomes `floor-api` `destroy(name)`, which sets `spec.destroy: true`; the destroy plan still needs approval.
+
+Non-production and production are unaffected: they track `main` only and never see PR branches.
+
+Not in v1: per-PR throwaway environments via Flux Operator `ResourceSet` (proven in the spike, but rejected on cost).
 
 ### 5.4 Approval model
 
@@ -144,7 +153,7 @@ Approval policy (v1): approvers = members of the `platform-team` authentik group
 | State backend | GCS, Workload Identity on `tf-runner` SA (one KSA per team/env) | `s3` backend to a fixture bucket; creds via OpenBao → Secret |
 | State encryption | `TF_ENCRYPTION` with `gcp_kms` key provider — same `method.aes_gcm.default` the Actions workflows inject | `TF_ENCRYPTION` with `pbkdf2` passphrase from OpenBao |
 | GCP provider auth | Workload Identity; no static keys | Not needed (kubernetes/helm providers only) |
-| GitHub (PR comments, commit status, PR state) | GitHub App installation token in OpenBao → Secret | Same |
+| GitHub (Branch Planner, PR comments, commit status, PR state) | GitHub App installation token in OpenBao → Secret | Same |
 | Kubernetes/Helm providers (Pneuma add-ons) | Unchanged: `google_client_config` token under Workload Identity, as `providers.tofu` does today. No kubeconfig Secrets, no `writeOutputsToSecret` dependency | Runner SA RBAC on docker-desktop |
 | Other provider secrets (GitHub provider for Logos, Datadog API/app keys, …) | OpenBao KV on the Pneuma cluster (already deployed by Pneuma), rendered by OpenBao Secrets Operator into per-workspace Secrets the runner `envFrom`s. Seeding OpenBao is a one-time operator step, same as creating Actions secrets today | Same |
 
@@ -173,10 +182,9 @@ MCP server (streamable HTTP) behind agentgateway; authentik OIDC; groups passed 
 | `list_workspaces(repo?, env?, pr?, state?)` | platform-group or owning team | Terraform objects with phase, pending plan, last applied revision |
 | `get_workspace(name)` | same | Full status + plan summary |
 | `pending_approvals()` | approvers | Objects with a pending plan the caller may approve |
-| `approve(name, planId)` / `reject(name, reason)` | platform-team | Sets `approvePlan` / records rejection |
+| `approve(name, planId)` / `reject(name, reason)` | platform-team | Sets `approvePlan` / records rejection. For a Branch Planner plan, first repoints the sandbox `GitRepository` at the PR (5.3) |
 | `replan(name)` | platform-team | Sets `approvePlan: replan` |
 | `hold(name)` / `unhold(name)` | platform-team | Sets / clears `approvePlan: disable` to freeze an object |
-| `checkout(repo, pr)` / `release(repo)` | platform-team | Points the repo's sandbox `GitRepository` at the PR branch / back at `main` |
 | `destroy(name)` | platform-team | Sets `spec.destroy: true`; the destroy plan still needs approval |
 | `explain(name, question?)` | read | Agent narration |
 | `watch(name)` | read | Streams status changes |
@@ -190,7 +198,7 @@ MCP server (streamable HTTP) behind agentgateway; authentik OIDC; groups passed 
 
 ```text
 Pneuma GKE cluster = management cluster (one per environment)
-  flux-system (off-mesh): flux-operator, flux controllers, tofu-controller
+  flux-system (off-mesh): flux-operator, flux controllers, tofu-controller, branch-planner
   floor-system (on-mesh): floor-api, OpenBao secrets operator sync, kagent floor agent
   pt-logos / pt-corpus / pt-pneuma namespaces: GitRepository, Terraform objects
     ├─ pt-pneuma objects reconcile this cluster itself (self-hosting)
@@ -210,7 +218,7 @@ Locally, docker-desktop plays the Pneuma cluster: the floor runs there and the P
 
 1. Flux Operator + tofu-controller deployed by a `tests/integration/floor/setup.sh` in `pt-pneuma`, off-mesh.
 2. A throwaway GitHub repo containing a copy of the Pneuma local-integration workspaces; `Terraform` objects for two of them with `dependsOn`.
-3. `checkout` of a PR into sandbox re-plans the objects at the PR head and posts the plan to the PR; `release` returns sandbox to `main`.
+3. A PR gets a Branch Planner comment for affected objects only; approving it repoints sandbox at the PR, applies, and merging returns sandbox to `main`.
 4. `floor-api` `list_workspaces`, `pending_approvals`, `approve` working through agentgateway with an authentik token; approval recorded as an Event and PR comment.
 5. `tests/integration/floor/verify.sh` covering the above.
 
@@ -220,7 +228,7 @@ Locally, docker-desktop plays the Pneuma cluster: the floor runs there and the P
 - Pneuma is the management cluster and is self-hosting; one floor per environment on that environment's Pneuma cluster; fleet clusters run no Flux.
 - Terraform object names = today's workspace names; state keys unchanged.
 - `dependsOn` replaces both `needs:` and cross-repo workflow triggers; production `dependsOn` non-production.
-- One shared sandbox per repo, checked out to a PR via `floor-api`; no per-PR stamps, no Branch Planner in v1.
+- One shared sandbox per repo as a proving ground; Branch Planner plans every PR against it (affected objects only); approving a PR plan repoints sandbox at the PR; no per-PR environments.
 - Every environment tracks `main`; production `dependsOn` non-production; no promotion mechanism in v1, only `hold`/`unhold`.
 - `floor-api` is the only writer of `approvePlan`; approvals are Events, not a database.
 - OpenBao Secrets Operator over the agent injector for runner secrets; all provider secrets come from OpenBao, not Actions secrets.
@@ -234,12 +242,14 @@ Locally, docker-desktop plays the Pneuma cluster: the floor runs there and the P
 
 ## 7. Left to the builder
 
-- Exact Helm values for Flux Operator, FluxInstance, tofu-controller (runner image digest pin, `allowedNamespaces`).
+- Exact Helm values for Flux Operator, FluxInstance, tofu-controller (runner image digest pin, `allowedNamespaces`, Branch Planner polling interval).
 - The mechanism that stops Flux from reverting `approvePlan` on reconcile (field manager / ignore annotation) and its test.
 - Per-team runner ServiceAccounts, Workload Identity bindings, and RBAC manifests — as OpenTofu in Corpus/Pneuma.
 - `floor-api` MCP schema, agentgateway route/policy, authentik provider.
 - Redaction rules for plan output.
-- How `floor-api` detects the checked-out PR closing/merging to auto-`release` sandbox (poll via GitHub App).
+- Change-detection rules in `floor-api` (path, `shared/` symlink targets, arche SHA bumps) and how it maintains the Branch Planner object list per PR.
+- How `floor-api` detects the applied PR closing/merging to return sandbox to `main` (poll via GitHub App).
+- The revision check between the approved Branch Planner plan and the re-plan after repointing the sandbox source.
 - Notification-controller `Provider`/`Alert` wiring to `floor-api`.
 - Migration order: Logos first (one workspace, production only), then Corpus, then Pneuma. No dual-running: the moment a repo's `Terraform` objects exist, its Actions deploy workflows are deleted in the same PR; the Actions cross-repo triggers are replaced by `dependsOn` at that point.
 
