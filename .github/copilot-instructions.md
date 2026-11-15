@@ -10,8 +10,8 @@ Read this together with the platform- and techne-team instructions, both loaded 
 The factory floor: in-cluster OpenTofu plan, approval, and apply for the platform. Flux Operator and flux-iac/tofu-controller are the engine; this repo holds the thin custom layer and the floor configuration:
 
 - `docs/superpowers/specs/` — design documents and spike findings. The current design is `2026-11-15-factory-floor-flux-design.md`; read it before changing anything.
-- Floor configuration (planned) — the `GitRepository`, `Terraform`, and `ResourceSet` objects for each deployment repo, reconciled by a Flux `Kustomization`, never by OpenTofu.
-- `floor-api` (planned) — Go MCP server behind agentgateway/authentik; the only writer of `spec.approvePlan`.
+- `floors/<floor>/` (currently `floors/local/`) — the `GitRepository` and `Terraform` objects for each deployment repo, reconciled by a Flux `Kustomization`, never by OpenTofu.
+- `cmd/floor-api` and `internal/` — Go MCP server behind agentgateway/authentik; the only writer of `spec.approvePlan`.
 
 ## Rules
 
