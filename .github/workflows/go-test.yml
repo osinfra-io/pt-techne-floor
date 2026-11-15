@@ -1,0 +1,52 @@
+name: Go Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    name: "Go: Test"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: 1.26.3
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
+        with:
+          install-mode: goinstall
+          version: c0d3ddc9cf3faa61a4e378e879ece580256d76e5  # v2.12.2
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: |
+          set -o pipefail
+          go test -race -coverprofile=cover.out ./... | tee test-results.txt
+          go tool cover -func=cover.out | tee coverage.txt
+
+      - name: Add test results to summary
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const testResults = fs.readFileSync('test-results.txt', 'utf8');
+            const coverage = fs.readFileSync('coverage.txt', 'utf8');
+            core.summary
+              .addHeading('Go Test Results')
+              .addCodeBlock(testResults)
+              .addHeading('Coverage Summary')
+              .addCodeBlock(coverage)
+              .write();
