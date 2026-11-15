@@ -1,0 +1,28 @@
+name: Kustomize
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Floors
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Approval is an operator decision made against the cluster, so it must never be committed.
+      - name: Build and assert no approvals
+        run: |
+          for floor in floors/*/; do
+            echo "Building ${floor}"
+            kubectl kustomize "${floor}" >"${RUNNER_TEMP}/out.yaml"
+            ! grep -q approvePlan "${RUNNER_TEMP}/out.yaml"
+          done

@@ -1,0 +1,5 @@
+# The runners stay off the ambient mesh with the rest of the engine.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pt-techne-floor-fixture

@@ -1,0 +1,14 @@
+# The Branch Planner clones the fixture to plan pull requests, so the source is
+# adopted rather than overwritten when it already exists.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
+  name: fixture
+  namespace: pt-techne-floor-fixture
+spec:
+  interval: 30s
+  ref:
+    branch: main
+  url: https://github.com/osinfra-io/pt-techne-floor-fixture

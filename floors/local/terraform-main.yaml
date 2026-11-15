@@ -1,0 +1,24 @@
+# spec.approvePlan is deliberately absent: approval is written against the cluster
+# by an operator through floor-api, never committed here.
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: main-sandbox
+  namespace: pt-techne-floor-fixture
+spec:
+  branchPlanner:
+    enablePathScope: true
+  disableDriftDetection: true
+  interval: 1m
+  path: ./main
+  runnerPodTemplate:
+    spec:
+      envFrom:
+        - secretRef:
+            name: floor-runner-env
+  serviceAccountName: tf-runner
+  sourceRef:
+    kind: GitRepository
+    name: fixture
+    namespace: pt-techne-floor-fixture
+  storeReadablePlan: json

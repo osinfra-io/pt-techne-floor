@@ -1,0 +1,26 @@
+# The regional workspace reads what main creates, so it stays unplanned until
+# main-sandbox is Ready.
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: regional-sandbox
+  namespace: pt-techne-floor-fixture
+spec:
+  branchPlanner:
+    enablePathScope: true
+  dependsOn:
+    - name: main-sandbox
+  disableDriftDetection: true
+  interval: 1m
+  path: ./regional
+  runnerPodTemplate:
+    spec:
+      envFrom:
+        - secretRef:
+            name: floor-runner-env
+  serviceAccountName: tf-runner
+  sourceRef:
+    kind: GitRepository
+    name: fixture
+    namespace: pt-techne-floor-fixture
+  storeReadablePlan: json
