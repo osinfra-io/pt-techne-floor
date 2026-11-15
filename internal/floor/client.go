@@ -11,11 +11,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Errors returned by Approve and ValidateApproval.
+// Errors returned by Approve and ValidateApproval (ErrPlanStale: Approve only).
 var (
 	ErrNoPendingPlan          = errors.New("no pending plan")
 	ErrPlanMismatch           = errors.New("plan id mismatch")
 	ErrDestroysUnacknowledged = errors.New("plan contains destroys and was not acknowledged")
+	ErrPlanStale              = errors.New("pending plan does not reflect the current spec")
 )
 
 // Client is a typed wrapper over a controller-runtime client scoped to
@@ -99,7 +100,12 @@ func ValidateApproval(ws Workspace, planID string, acknowledgeDestroys bool) err
 // Approve validates planID against the named Terraform object's pending
 // plan and, if valid, approves it by setting spec.approvePlan.
 func (c *Client) Approve(ctx context.Context, name, planID string, acknowledgeDestroys bool) error {
-	ws, err := c.Get(ctx, name)
+	obj, err := c.Workspace(ctx, name)
+	if err != nil {
+		return err
+	}
+
+	ws, err := c.toWorkspace(ctx, obj)
 	if err != nil {
 		return err
 	}
@@ -108,7 +114,17 @@ func (c *Client) Approve(ctx context.Context, name, planID string, acknowledgeDe
 		return err
 	}
 
-	return c.SetApprovePlan(ctx, name, planID)
+	// A spec change, such as a destroy request, leaves the old pending plan
+	// visible until the controller observes the new generation.
+	if observed, _, _ := unstructured.NestedInt64(obj.Object, "status", "observedGeneration"); observed != obj.GetGeneration() {
+		return fmt.Errorf("%w: generation %d, observed %d", ErrPlanStale, obj.GetGeneration(), observed)
+	}
+
+	// Including the validated resourceVersion makes the patch fail with a
+	// conflict if the object changed after validation.
+	patch := fmt.Sprintf(`{"metadata":{"resourceVersion":%q},"spec":{"approvePlan":%q}}`, obj.GetResourceVersion(), planID)
+
+	return c.mergePatch(ctx, name, patch)
 }
 
 // Hold disables reconciliation by setting spec.approvePlan to "disable".

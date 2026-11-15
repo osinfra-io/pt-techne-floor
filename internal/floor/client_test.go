@@ -274,3 +274,21 @@ func TestSetDestroyClearsApproval(t *testing.T) {
 		t.Errorf("spec.approvePlan should be cleared when destruction is requested")
 	}
 }
+
+func TestApproveRejectsPlanNotReflectingSpec(t *testing.T) {
+	const name = "main-sandbox"
+
+	obj := newTerraform(name, "pt-techne-floor-fixture", map[string]any{"path": "./main", "destroy": true}, map[string]any{
+		"plan":               map[string]any{"pending": "plan-main-49203ac458"},
+		"observedGeneration": int64(1),
+	}, nil, nil)
+	obj.SetGeneration(2)
+
+	fakeClient := fake.NewClientBuilder().WithScheme(newScheme()).WithObjects(obj).Build()
+	c := NewClient(fakeClient, "pt-techne-floor-fixture")
+
+	err := c.Approve(context.Background(), name, "plan-main-49203ac458", false)
+	if !errors.Is(err, ErrPlanStale) {
+		t.Fatalf("Approve() error = %v, want ErrPlanStale", err)
+	}
+}
