@@ -3,6 +3,7 @@ module github.com/osinfra-io/pt-techne-floor
 go 1.26.0
 
 require (
+	github.com/google/go-github/v68 v68.0.0
 	k8s.io/apimachinery v0.37.2
 	sigs.k8s.io/controller-runtime v0.25.2
 )
@@ -30,6 +31,7 @@ require (
 	github.com/go-openapi/swag/typeutils v0.27.1 // indirect
 	github.com/go-openapi/swag/yamlutils v0.27.1 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
+	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
