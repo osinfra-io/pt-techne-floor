@@ -49,7 +49,8 @@ metadata:
   namespace: pt-bootstrap-sandbox
 spec:
   backendConfig:
-    disable: true
+    customConfiguration: |
+      backend "gcs" {}
   backendConfigsFrom:
     - kind: ConfigMap
       name: logos-bootstrap-backend
