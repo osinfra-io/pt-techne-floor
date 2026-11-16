@@ -1,12 +1,36 @@
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
-  name: logos-bootstrap
+  name: logos-bootstrap-source
   namespace: pt-bootstrap-sandbox
 spec:
   interval: 1m
   ref:
-    branch: redesign-logos-hierarchy
+    commit: d5f72fd6f8fd2cfac73c123de726f77fef456c10
+  url: https://github.com/osinfra-io/pt-logos
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: logos-bootstrap
+  namespace: pt-bootstrap-sandbox
+spec:
+  include:
+    - repository:
+        name: logos-bootstrap-source
+      fromPath: .
+      toPath: workspace
+    - repository:
+        name: logos-bootstrap-source
+      fromPath: shared/backend.tofu
+      toPath: workspace/backend.tofu
+    - repository:
+        name: logos-bootstrap-source
+      fromPath: shared/providers.tofu
+      toPath: workspace/providers.tofu
+  interval: 1m
+  ref:
+    commit: d5f72fd6f8fd2cfac73c123de726f77fef456c10
   url: https://github.com/osinfra-io/pt-logos
 ---
 apiVersion: v1
@@ -34,7 +58,7 @@ spec:
   destroyResourcesOnDeletion: false
   disableDriftDetection: true
   interval: 10m
-  path: ./
+  path: ./workspace
   runnerPodTemplate:
     spec:
       envFrom:
