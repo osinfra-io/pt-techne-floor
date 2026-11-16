@@ -11,6 +11,11 @@ output "project_id" {
   value       = google_project.bootstrap.project_id
 }
 
+output "runner_service_account_emails" {
+  description = "Stable keyless Sandbox floor identities delegated shared-group membership management by Logos global"
+  value       = local.runner_service_account_emails
+}
+
 output "state_bucket_name" {
   description = "Remote state bucket for subsequent sandbox bootstrap stages"
   value       = google_storage_bucket.state.name

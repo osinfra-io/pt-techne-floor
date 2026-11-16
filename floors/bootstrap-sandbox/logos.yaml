@@ -1,38 +1,38 @@
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
-  name: logos-bootstrap-source-a37204ed3b7715886c5d7de1f98787ea5814f26e
+  name: logos-bootstrap-source-da6c2d69e1eb51cf48a277675935c7db3bdc79b3
   namespace: pt-bootstrap-sandbox
 spec:
   interval: 1m
   ref:
     branch: redesign-logos-hierarchy
-    commit: a37204ed3b7715886c5d7de1f98787ea5814f26e
+    commit: da6c2d69e1eb51cf48a277675935c7db3bdc79b3
   url: https://github.com/osinfra-io/pt-logos
 ---
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
-  name: logos-bootstrap-a37204ed3b7715886c5d7de1f98787ea5814f26e
+  name: logos-bootstrap-da6c2d69e1eb51cf48a277675935c7db3bdc79b3
   namespace: pt-bootstrap-sandbox
 spec:
   include:
     - repository:
-        name: logos-bootstrap-source-a37204ed3b7715886c5d7de1f98787ea5814f26e
+        name: logos-bootstrap-source-da6c2d69e1eb51cf48a277675935c7db3bdc79b3
       fromPath: .
       toPath: workspace
     - repository:
-        name: logos-bootstrap-source-a37204ed3b7715886c5d7de1f98787ea5814f26e
+        name: logos-bootstrap-source-da6c2d69e1eb51cf48a277675935c7db3bdc79b3
       fromPath: shared/backend.tofu
       toPath: workspace/backend.tofu
     - repository:
-        name: logos-bootstrap-source-a37204ed3b7715886c5d7de1f98787ea5814f26e
+        name: logos-bootstrap-source-da6c2d69e1eb51cf48a277675935c7db3bdc79b3
       fromPath: shared/providers.tofu
       toPath: workspace/providers.tofu
   interval: 1m
   ref:
     branch: redesign-logos-hierarchy
-    commit: a37204ed3b7715886c5d7de1f98787ea5814f26e
+    commit: da6c2d69e1eb51cf48a277675935c7db3bdc79b3
   url: https://github.com/osinfra-io/pt-logos
 ---
 apiVersion: v1
@@ -65,6 +65,14 @@ spec:
   dependsOn:
     - name: bootstrap-sandbox
   vars:
+    - name: google_organization_group_managers
+      value:
+        billing_users:
+          - pt-corpus-floor-sb@pt-bootstrap-648523111758-sb.iam.gserviceaccount.com
+        gke_security_groups:
+          - pt-pneuma-floor-sb@pt-bootstrap-648523111758-sb.iam.gserviceaccount.com
+        state_readers:
+          - pt-corpus-floor-sb@pt-bootstrap-648523111758-sb.iam.gserviceaccount.com
     - name: teams
       value: {}
   workspace: pt-logos-global

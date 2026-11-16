@@ -62,6 +62,26 @@ resource "google_project_service" "bootstrap" {
   service            = each.key
 }
 
+# Google Service Account
+# https://search.opentofu.org/provider/hashicorp/google/latest/docs/resources/google_service_account
+
+resource "google_service_account" "runners" {
+  depends_on = [
+    google_project_service.bootstrap["iam.googleapis.com"]
+  ]
+
+  for_each = local.runner_service_accounts
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  account_id   = each.value.account_id
+  description  = each.value.description
+  display_name = each.value.display_name
+  project      = google_project.bootstrap.project_id
+}
+
 # Google Storage Bucket
 # https://search.opentofu.org/provider/hashicorp/google/latest/docs/resources/storage_bucket
 

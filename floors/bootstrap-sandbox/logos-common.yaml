@@ -23,7 +23,7 @@ spec:
   serviceAccountName: tf-bootstrap
   sourceRef:
     kind: GitRepository
-    name: logos-bootstrap-a37204ed3b7715886c5d7de1f98787ea5814f26e
+    name: logos-bootstrap-da6c2d69e1eb51cf48a277675935c7db3bdc79b3
   storeReadablePlan: json
   varsFrom:
     - kind: ConfigMap
