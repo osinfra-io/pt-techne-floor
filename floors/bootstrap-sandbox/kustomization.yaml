@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+patches:
+  - path: logos-common.yaml
+    target:
+      group: infra.contrib.fluxcd.io
+      kind: Terraform
+      labelSelector: app.kubernetes.io/component=logos
+
+resources:
+  - namespace.yaml
+  - runner-rbac.yaml
+  - gitrepository.yaml
+  - terraform.yaml
+  - logos.yaml
+  - logos-teams.yaml

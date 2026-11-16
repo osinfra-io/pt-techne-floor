@@ -24,19 +24,19 @@ var errUnauthenticated = errors.New("unauthenticated: no authentik identity was 
 
 // nameInput identifies a single Terraform object.
 type nameInput struct {
-	Name string `json:"name" jsonschema:"name of the Terraform object"`
+	Name string `json:"name" jsonschema:"Terraform object name; use namespace/name outside the default namespace"`
 }
 
 // approveInput is the argument set of the approve tool.
 type approveInput struct {
-	Name                string `json:"name" jsonschema:"name of the Terraform object"`
+	Name                string `json:"name" jsonschema:"Terraform object name; use namespace/name outside the default namespace"`
 	PlanID              string `json:"planId" jsonschema:"plan id the approver read, which must match the object's pending plan"`
 	AcknowledgeDestroys bool   `json:"acknowledgeDestroys,omitempty" jsonschema:"acknowledge that the plan destroys resources"`
 }
 
 // rejectInput is the argument set of the reject tool.
 type rejectInput struct {
-	Name   string `json:"name" jsonschema:"name of the Terraform object"`
+	Name   string `json:"name" jsonschema:"Terraform object name; use namespace/name outside the default namespace"`
 	Reason string `json:"reason" jsonschema:"why the pending plan was rejected"`
 }
 

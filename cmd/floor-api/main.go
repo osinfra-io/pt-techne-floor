@@ -116,8 +116,17 @@ func run() error {
 
 	defer broadcaster.Shutdown()
 
-	fl := floor.NewClient(k, namespace)
-	sb := sandbox.NewManager(fl, gh, k, namespace, gitRepository)
+	additionalNamespaces := strings.FieldsFunc(os.Getenv("FLOOR_ADDITIONAL_NAMESPACES"), func(r rune) bool { return r == ',' })
+	for i := range additionalNamespaces {
+		additionalNamespaces[i] = strings.TrimSpace(additionalNamespaces[i])
+		if additionalNamespaces[i] == "" {
+			return errors.New("FLOOR_ADDITIONAL_NAMESPACES must not contain blank namespaces")
+		}
+	}
+
+	fl := floor.NewClient(k, namespace, additionalNamespaces...)
+	// PR repointing belongs only to the configured fixture repository.
+	sb := sandbox.NewManager(floor.NewClient(k, namespace), gh, k, namespace, gitRepository)
 	recorder := broadcaster.NewRecorder(s, corev1.EventSource{Component: "floor-api"})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -142,7 +151,7 @@ func run() error {
 		}
 	}()
 
-	log.Printf("floor-api %s serving %s for namespace %s", version, listenAddress, namespace)
+	log.Printf("floor-api %s serving %s for namespace %s and additional namespaces %v", version, listenAddress, namespace, additionalNamespaces)
 
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serving: %w", err)

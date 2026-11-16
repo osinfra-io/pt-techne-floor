@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: bootstrap-sandbox
+  namespace: pt-bootstrap-sandbox
+spec:
+  interval: 1m
+  ref:
+    branch: bootstrap-sandbox-from-local-floor
+  url: https://github.com/osinfra-io/pt-techne-floor

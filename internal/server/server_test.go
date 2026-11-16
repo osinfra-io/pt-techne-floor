@@ -108,7 +108,7 @@ type harness struct {
 
 // newHarness wires the MCP server over a fake cluster and connects an
 // in-memory client session whose context carries identity.
-func newHarness(t *testing.T, identity Identity) *harness {
+func newHarness(t *testing.T, identity Identity, additionalNamespaces ...string) *harness {
 	t.Helper()
 
 	k := fake.NewClientBuilder().
@@ -120,14 +120,14 @@ func newHarness(t *testing.T, identity Identity) *harness {
 		).
 		Build()
 
-	fl := floor.NewClient(k, testNamespace)
+	fl := floor.NewClient(k, testNamespace, additionalNamespaces...)
 
 	gh, err := githubapi.NewClient("token", "osinfra-io", "pt-techne-floor-fixture", newGitHubServer(t).URL)
 	if err != nil {
 		t.Fatalf("githubapi.NewClient: %v", err)
 	}
 
-	sb := sandbox.NewManager(fl, gh, k, testNamespace, testGitRepository)
+	sb := sandbox.NewManager(floor.NewClient(k, testNamespace), gh, k, testNamespace, testGitRepository)
 	recorder := record.NewFakeRecorder(10)
 
 	server := New(fl, sb, recorder, testApproverGroup)
@@ -209,6 +209,79 @@ func TestListWorkspaces(t *testing.T) {
 		if !strings.Contains(text, name) {
 			t.Errorf("list_workspaces output does not contain %q: %s", name, text)
 		}
+	}
+}
+
+func TestBootstrapWorkspaceThroughFloor(t *testing.T) {
+	const namespace = "pt-bootstrap-sandbox"
+	const name = namespace + "/bootstrap-sandbox"
+
+	for _, tc := range []struct {
+		name     string
+		groups   []string
+		planID   string
+		approved bool
+	}{
+		{name: "approver", groups: []string{testApproverGroup}, planID: testPlanID, approved: true},
+		{name: "reader", planID: testPlanID},
+		{name: "stale plan", groups: []string{testApproverGroup}, planID: "plan-main-aaaaaaaaaa"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, Identity{User: "operator", Groups: tc.groups}, namespace)
+			seed := newTerraform("bootstrap-sandbox", "./bootstrap/sandbox", testPlanID)
+			seed.SetNamespace(namespace)
+			if err := h.k.Create(context.Background(), seed); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, tool := range []string{"list_workspaces", "pending_approvals", "get_workspace"} {
+				arguments := map[string]any{}
+				if tool == "get_workspace" {
+					arguments["name"] = name
+				}
+				result := h.call(tool, arguments)
+				if result.IsError || !strings.Contains(resultText(t, result), name) {
+					t.Fatalf("%s did not expose the bootstrap workspace: %s", tool, resultText(t, result))
+				}
+			}
+
+			result := h.call("approve", map[string]any{"name": name, "planId": tc.planID})
+			if result.IsError == tc.approved {
+				t.Fatalf("approve error = %t, want %t: %s", result.IsError, !tc.approved, resultText(t, result))
+			}
+			if err := h.k.Get(context.Background(), types.NamespacedName{Namespace: namespace, Name: "bootstrap-sandbox"}, seed); err != nil {
+				t.Fatal(err)
+			}
+			approval, _, _ := unstructured.NestedString(seed.Object, "spec", "approvePlan")
+			if (approval == testPlanID) != tc.approved {
+				t.Fatalf("bootstrap approval = %q, approved = %t", approval, tc.approved)
+			}
+			if h.approvePlan("main-sandbox") != "" {
+				t.Fatal("bootstrap approval changed the fixture")
+			}
+		})
+	}
+}
+
+func TestAdditionalNamespaceCannotRepointFixture(t *testing.T) {
+	const namespace = "pt-bootstrap-sandbox"
+	h := newHarness(t, Identity{User: "operator", Groups: []string{testApproverGroup}}, namespace)
+	planner := newTerraform("bootstrap-pr", "./bootstrap/sandbox", testPlanID)
+	planner.SetNamespace(namespace)
+	planner.SetLabels(map[string]string{
+		"infra.weave.works/pr-id":            "42",
+		"infra.weave.works/primary-resource": "main-sandbox",
+	})
+	if err := h.k.Create(context.Background(), planner); err != nil {
+		t.Fatal(err)
+	}
+
+	result := h.call("approve", map[string]any{"name": namespace + "/bootstrap-pr", "planId": testPlanID})
+	if !result.IsError || !strings.Contains(resultText(t, result), "not configured") {
+		t.Fatalf("approve did not reject cross-namespace PR repointing: %s", resultText(t, result))
+	}
+	if h.approvePlan("main-sandbox") != "" {
+		t.Fatal("cross-namespace planner approved the fixture")
 	}
 }
 

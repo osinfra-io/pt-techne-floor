@@ -1,0 +1,83 @@
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  labels:
+    app.kubernetes.io/component: logos
+  name: logos-arche-sandbox
+  namespace: pt-bootstrap-sandbox
+spec:
+  dependsOn:
+    - name: logos-foundation-sandbox
+  tfVarsFiles:
+    - teams/pt-arche.tfvars
+  workspace: pt-arche-main-sandbox
+---
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  labels:
+    app.kubernetes.io/component: logos
+  name: logos-corpus-sandbox
+  namespace: pt-bootstrap-sandbox
+spec:
+  dependsOn:
+    - name: logos-foundation-sandbox
+  tfVarsFiles:
+    - teams/pt-corpus.tfvars
+  workspace: pt-corpus-main-sandbox
+---
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  labels:
+    app.kubernetes.io/component: logos
+  name: logos-ekklesia-sandbox
+  namespace: pt-bootstrap-sandbox
+spec:
+  dependsOn:
+    - name: logos-foundation-sandbox
+  tfVarsFiles:
+    - teams/pt-ekklesia.tfvars
+  workspace: pt-ekklesia-main-sandbox
+---
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  labels:
+    app.kubernetes.io/component: logos
+  name: logos-pneuma-sandbox
+  namespace: pt-bootstrap-sandbox
+spec:
+  dependsOn:
+    - name: logos-foundation-sandbox
+  tfVarsFiles:
+    - teams/pt-pneuma.tfvars
+  workspace: pt-pneuma-main-sandbox
+---
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  labels:
+    app.kubernetes.io/component: logos
+  name: logos-techne-sandbox
+  namespace: pt-bootstrap-sandbox
+spec:
+  dependsOn:
+    - name: logos-foundation-sandbox
+  tfVarsFiles:
+    - teams/pt-techne.tfvars
+  workspace: pt-techne-main-sandbox
+---
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  labels:
+    app.kubernetes.io/component: logos
+  name: logos-ethos-sandbox
+  namespace: pt-bootstrap-sandbox
+spec:
+  dependsOn:
+    - name: logos-foundation-sandbox
+  tfVarsFiles:
+    - teams/st-ethos.tfvars
+  workspace: st-ethos-main-sandbox
