@@ -59,34 +59,11 @@ kind: Terraform
 metadata:
   labels:
     app.kubernetes.io/component: logos
-  name: logos-global
-  namespace: pt-bootstrap-sandbox
-spec:
-  dependsOn:
-    - name: bootstrap-sandbox
-  vars:
-    - name: google_organization_group_managers
-      value:
-        billing_users:
-          - pt-corpus-floor-sb@pt-bootstrap-648523111758-sb.iam.gserviceaccount.com
-        gke_security_groups:
-          - pt-pneuma-floor-sb@pt-bootstrap-648523111758-sb.iam.gserviceaccount.com
-        state_readers:
-          - pt-corpus-floor-sb@pt-bootstrap-648523111758-sb.iam.gserviceaccount.com
-    - name: teams
-      value: {}
-  workspace: pt-logos-global
----
-apiVersion: infra.contrib.fluxcd.io/v1alpha2
-kind: Terraform
-metadata:
-  labels:
-    app.kubernetes.io/component: logos
   name: logos-foundation-sandbox
   namespace: pt-bootstrap-sandbox
 spec:
   dependsOn:
-    - name: logos-global
+    - name: bootstrap-sandbox
   tfVarsFiles:
     - teams/pt-logos.tfvars
   workspace: pt-logos-main-sandbox
