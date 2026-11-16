@@ -16,3 +16,11 @@ tests/integration/verify.sh
 ```
 
 Set `FLOOR_CONFIG_REF=<branch>` before `setup.sh` to point the cluster at an unmerged `pt-techne-floor` branch instead of the default `main`.
+
+## Sandbox seed bootstrap
+
+With the local floor running and `gcloud auth application-default login` completed, run `bash bootstrap/sandbox/prepare.sh`. This opt-in path uses folder `648523111758` and the existing billing account to **plan**, not automatically apply, a dedicated seed project, versioned private state bucket, and KMS key. It creates no GKE cluster, networking, team projects, or service-account keys. Logos/Corpus bootstrap and the eventual GKE handoff are subsequent stages, not implemented by this seed root.
+
+Only a short-lived Google access token is delivered to the runner; the local ADC refresh credential is never copied. Rerun the preparation script before approval if the token expires. The bootstrap uses its own `pt-bootstrap-sandbox` namespace, outside the disposable fixture namespace. Its encrypted Kubernetes state and `.work/bootstrap-sandbox/encryption.hcl` are both required for recovery: preserve them securely and do not reset Docker Desktop. The seed state cannot depend on the GCS/KMS resources it is creating. Moving that state to durable storage is a separate, explicit migration after the first apply; never start a second owner with empty state.
+
+Inspect the `bootstrap-sandbox` Terraform object and its readable plan in that namespace. The current local floor API is scoped to the fixture namespace; this initial bootstrap requires a human operator to approve the exact pending plan directly on the bootstrap Terraform object. No approval is committed in Git. Neither a Git push nor running `prepare.sh` approves cloud changes.
