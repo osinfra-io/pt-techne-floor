@@ -6,10 +6,12 @@ umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
-readonly REPO_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+readonly REPO_DIR
 readonly WORK_DIR="${REPO_DIR}/.work/bootstrap-sandbox"
 readonly NAMESPACE="pt-bootstrap-sandbox"
 readonly ENCRYPTION_FILE="${WORK_DIR}/encryption.hcl"
+readonly FOUNDATION_ENCRYPTION_FILE="${WORK_DIR}/foundation-encryption.hcl"
 
 fail() {
   echo "sandbox bootstrap: $*" >&2
@@ -98,6 +100,42 @@ gcloud auth application-default print-access-token |
     --from-file=GOOGLE_OAUTH_ACCESS_TOKEN=/dev/stdin --dry-run=client --output=yaml |
   kubectl apply --server-side --field-manager=sandbox-bootstrap --filename=- >/dev/null
 
+seed_ready="$(kubectl get terraform bootstrap-sandbox --namespace="${NAMESPACE}" \
+  --ignore-not-found --output=jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
+if [ "${seed_ready}" = "True" ]; then
+  kms_key="$(gcloud kms keys describe default --keyring=state-encryption --location=us \
+    --project=pt-bootstrap-648523111758-sb --format='value(name)')"
+  [ -n "${kms_key}" ] || fail "the applied seed KMS key could not be resolved"
+
+  cat >"${FOUNDATION_ENCRYPTION_FILE}" <<HCL
+key_provider "gcp_kms" "default" {
+  key_length         = 32
+  kms_encryption_key = "${kms_key}"
+}
+method "aes_gcm" "default" {
+  keys = key_provider.gcp_kms.default
+}
+state {
+  method   = method.aes_gcm.default
+  enforced = true
+}
+plan {
+  method   = method.aes_gcm.default
+  enforced = true
+}
+remote_state_data_sources {
+  default {
+    method = method.aes_gcm.default
+  }
+}
+HCL
+
+  kubectl create secret generic floor-foundation-state-env \
+    --namespace="${NAMESPACE}" --from-file="TF_ENCRYPTION=${FOUNDATION_ENCRYPTION_FILE}" \
+    --dry-run=client --output=yaml |
+    kubectl apply --server-side --field-manager=sandbox-bootstrap --filename=- >/dev/null
+fi
+
 kubectl apply --filename=- >/dev/null <<YAML
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -130,4 +168,5 @@ echo "Sandbox bootstrap registered; no cloud apply was approved."
 echo "From pt-pneuma, run FLOOR_ADDITIONAL_NAMESPACES=${NAMESPACE} tests/integration/floor/setup.sh to expose it through floor-api."
 echo "Review ${NAMESPACE}/bootstrap-sandbox through the floor's get_workspace and pending_approvals tools; a human must approve."
 echo "Rerun this script before approving if the Google access token has expired."
+echo "After the seed is Ready, rerun this script to prepare the Logos foundation's GCS/KMS state."
 echo "Keep ${ENCRYPTION_FILE} and the ${NAMESPACE} state Secrets safe; do not reset Docker Desktop."

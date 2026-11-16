@@ -1,0 +1,55 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: logos-bootstrap
+  namespace: pt-bootstrap-sandbox
+spec:
+  interval: 1m
+  ref:
+    branch: redesign-logos-hierarchy
+  url: https://github.com/osinfra-io/pt-logos
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logos-bootstrap-backend
+  namespace: pt-bootstrap-sandbox
+data:
+  bucket: pt-bootstrap-648523111758-sb-state
+  prefix: pt-logos
+---
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: logos-foundation-sandbox
+  namespace: pt-bootstrap-sandbox
+spec:
+  backendConfig:
+    disable: true
+  backendConfigsFrom:
+    - kind: ConfigMap
+      name: logos-bootstrap-backend
+  dependsOn:
+    - name: bootstrap-sandbox
+  destroyResourcesOnDeletion: false
+  disableDriftDetection: true
+  interval: 10m
+  path: ./
+  runnerPodTemplate:
+    spec:
+      envFrom:
+        - secretRef:
+            name: floor-bootstrap-auth
+        - secretRef:
+            name: floor-foundation-state-env
+  serviceAccountName: tf-bootstrap
+  sourceRef:
+    kind: GitRepository
+    name: logos-bootstrap
+  storeReadablePlan: json
+  vars:
+    - name: google_environment_root_folder_id
+      value: "648523111758"
+    - name: teams
+      value: {}
+  workspace: pt-logos-main-sandbox

@@ -6,3 +6,4 @@ resources:
   - runner-rbac.yaml
   - gitrepository.yaml
   - terraform.yaml
+  - logos.yaml
