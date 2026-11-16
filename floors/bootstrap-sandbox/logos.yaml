@@ -6,6 +6,7 @@ metadata:
 spec:
   interval: 1m
   ref:
+    branch: redesign-logos-hierarchy
     commit: d5f72fd6f8fd2cfac73c123de726f77fef456c10
   url: https://github.com/osinfra-io/pt-logos
 ---
@@ -30,6 +31,7 @@ spec:
       toPath: workspace/providers.tofu
   interval: 1m
   ref:
+    branch: redesign-logos-hierarchy
     commit: d5f72fd6f8fd2cfac73c123de726f77fef456c10
   url: https://github.com/osinfra-io/pt-logos
 ---
