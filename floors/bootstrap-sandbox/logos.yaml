@@ -7,7 +7,7 @@ spec:
   interval: 1m
   ref:
     branch: redesign-logos-hierarchy
-    commit: d5f72fd6f8fd2cfac73c123de726f77fef456c10
+    commit: a37204ed3b7715886c5d7de1f98787ea5814f26e
   url: https://github.com/osinfra-io/pt-logos
 ---
 apiVersion: source.toolkit.fluxcd.io/v1
@@ -32,7 +32,7 @@ spec:
   interval: 1m
   ref:
     branch: redesign-logos-hierarchy
-    commit: d5f72fd6f8fd2cfac73c123de726f77fef456c10
+    commit: a37204ed3b7715886c5d7de1f98787ea5814f26e
   url: https://github.com/osinfra-io/pt-logos
 ---
 apiVersion: v1
@@ -44,39 +44,41 @@ data:
   bucket: pt-bootstrap-648523111758-sb-state
   prefix: pt-logos
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logos-bootstrap-inputs
+  namespace: pt-bootstrap-sandbox
+data:
+  google_environment_root_folder_id: "648523111758"
+  google_foundation_state_bucket: pt-bootstrap-648523111758-sb-state
+  google_quota_project: pt-bootstrap-648523111758-sb
+---
 apiVersion: infra.contrib.fluxcd.io/v1alpha2
 kind: Terraform
 metadata:
+  labels:
+    app.kubernetes.io/component: logos
+  name: logos-global
+  namespace: pt-bootstrap-sandbox
+spec:
+  dependsOn:
+    - name: bootstrap-sandbox
+  vars:
+    - name: teams
+      value: {}
+  workspace: pt-logos-global
+---
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  labels:
+    app.kubernetes.io/component: logos
   name: logos-foundation-sandbox
   namespace: pt-bootstrap-sandbox
 spec:
-  backendConfig:
-    customConfiguration: |
-      backend "gcs" {}
-  backendConfigsFrom:
-    - kind: ConfigMap
-      name: logos-bootstrap-backend
   dependsOn:
-    - name: bootstrap-sandbox
-  destroyResourcesOnDeletion: false
-  disableDriftDetection: true
-  interval: 10m
-  path: ./workspace
-  runnerPodTemplate:
-    spec:
-      envFrom:
-        - secretRef:
-            name: floor-bootstrap-auth
-        - secretRef:
-            name: floor-foundation-state-env
-  serviceAccountName: tf-bootstrap
-  sourceRef:
-    kind: GitRepository
-    name: logos-bootstrap
-  storeReadablePlan: json
-  vars:
-    - name: google_environment_root_folder_id
-      value: "648523111758"
-    - name: teams
-      value: {}
+    - name: logos-global
+  tfVarsFiles:
+    - teams/pt-logos.tfvars
   workspace: pt-logos-main-sandbox
