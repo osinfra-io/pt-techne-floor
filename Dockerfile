@@ -5,7 +5,8 @@
 #   FLOOR_APPROVER_GROUP — authentik group whose members may mutate workspaces.
 #   FLOOR_GIT_REPOSITORY — name of the GitRepository the sandbox repoints.
 #   FLOOR_GITHUB_REPO    — owner/repo of the floor configuration repository.
-#   FLOOR_NAMESPACE      — namespace holding the Terraform objects.
+#   FLOOR_NAMESPACE      — default namespace holding the Terraform objects.
+#   FLOOR_ADDITIONAL_NAMESPACES — optional comma-separated workspace namespaces.
 #   GITHUB_TOKEN         — token used to read and comment on pull requests.
 
 FROM golang:1.27-alpine AS build

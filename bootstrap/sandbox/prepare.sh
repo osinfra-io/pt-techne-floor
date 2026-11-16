@@ -127,6 +127,7 @@ spec:
 YAML
 
 echo "Sandbox bootstrap registered; no cloud apply was approved."
-echo "Inspect: kubectl --context=docker-desktop -n ${NAMESPACE} get terraform bootstrap-sandbox"
+echo "From pt-pneuma, run FLOOR_ADDITIONAL_NAMESPACES=${NAMESPACE} tests/integration/floor/setup.sh to expose it through floor-api."
+echo "Review ${NAMESPACE}/bootstrap-sandbox through the floor's get_workspace and pending_approvals tools; a human must approve."
 echo "Rerun this script before approving if the Google access token has expired."
 echo "Keep ${ENCRYPTION_FILE} and the ${NAMESPACE} state Secrets safe; do not reset Docker Desktop."

@@ -119,6 +119,65 @@ func TestListMapsStatus(t *testing.T) {
 	}
 }
 
+func TestAdditionalNamespaceWorkspaces(t *testing.T) {
+	const primary = "pt-techne-floor-fixture"
+	const bootstrap = "pt-bootstrap-sandbox"
+	const planID = "plan-bootstrap-49203ac458"
+
+	fixture := newTerraform("main-sandbox", primary, map[string]any{}, nil, nil, nil)
+	seed := newTerraform("main-sandbox", bootstrap, map[string]any{}, map[string]any{
+		"plan": map[string]any{"pending": planID},
+	}, nil, nil)
+	other := newTerraform("main-sandbox", "unconfigured", map[string]any{}, nil, nil, nil)
+	c := NewClient(fake.NewClientBuilder().WithScheme(newScheme()).WithObjects(fixture, seed, other).Build(),
+		primary, bootstrap, bootstrap)
+	ctx := context.Background()
+
+	workspaces, err := c.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workspaces) != 2 || workspaces[0].Name != "main-sandbox" || workspaces[1].Name != bootstrap+"/main-sandbox" {
+		t.Fatalf("List() = %+v, want distinct fixture and qualified bootstrap names", workspaces)
+	}
+
+	if err := c.Approve(ctx, bootstrap+"/main-sandbox", planID, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"main-sandbox", bootstrap + "/main-sandbox"} {
+		obj, err := c.Workspace(ctx, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		approval, _, _ := unstructured.NestedString(obj.Object, "spec", "approvePlan")
+		if name == "main-sandbox" && approval != "" {
+			t.Fatal("bootstrap approval changed the fixture workspace")
+		}
+		if name != "main-sandbox" && approval != planID {
+			t.Fatalf("bootstrap approval = %q, want %q", approval, planID)
+		}
+	}
+}
+
+func TestWorkspaceNamespaceBoundary(t *testing.T) {
+	c := NewClient(fake.NewClientBuilder().WithScheme(newScheme()).Build(), "fixture", "bootstrap")
+
+	for _, name := range []string{"unconfigured/seed", "/seed", "bootstrap/", "bootstrap/seed/other"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := c.Workspace(context.Background(), name); err == nil {
+				t.Fatal("Workspace() accepted an invalid or unconfigured namespace/name")
+			}
+			if err := c.Hold(context.Background(), name); err == nil {
+				t.Fatal("Hold() accepted an invalid or unconfigured namespace/name")
+			}
+		})
+	}
+
+	if _, err := NewClient(c.k, "fixture", "").List(context.Background()); err == nil {
+		t.Fatal("List() accepted an empty namespace, which would list cluster-wide")
+	}
+}
+
 func TestApproveSetsApprovePlan(t *testing.T) {
 	const name = "main-sandbox"
 

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -20,37 +22,50 @@ var (
 )
 
 // Client is a typed wrapper over a controller-runtime client scoped to
-// tofu-controller Terraform objects in a single namespace.
+// tofu-controller Terraform objects in explicitly configured namespaces.
 type Client struct {
-	k         client.Client
-	namespace string
+	k          client.Client
+	namespace  string
+	namespaces []string
 }
 
-// NewClient returns a Client that reads and patches Terraform objects in
-// namespace using k.
-func NewClient(k client.Client, namespace string) *Client {
-	return &Client{k: k, namespace: namespace}
-}
-
-// List returns every Terraform object in the client's namespace, mapped to
-// Workspace.
-func (c *Client) List(ctx context.Context) ([]Workspace, error) {
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(TerraformGVK.GroupVersion().WithKind(TerraformGVK.Kind + "List"))
-
-	if err := c.k.List(ctx, list, client.InNamespace(c.namespace)); err != nil {
-		return nil, fmt.Errorf("listing Terraform objects: %w", err)
+// NewClient uses namespace for unqualified names. Objects in additional
+// namespaces are addressed as namespace/name.
+func NewClient(k client.Client, namespace string, additionalNamespaces ...string) *Client {
+	namespaces := []string{namespace}
+	for _, ns := range additionalNamespaces {
+		if !slices.Contains(namespaces, ns) {
+			namespaces = append(namespaces, ns)
+		}
 	}
 
-	workspaces := make([]Workspace, 0, len(list.Items))
+	return &Client{k: k, namespace: namespace, namespaces: namespaces}
+}
 
-	for i := range list.Items {
-		ws, err := c.toWorkspace(ctx, &list.Items[i])
-		if err != nil {
-			return nil, err
+// List returns every Terraform object in the configured namespaces.
+func (c *Client) List(ctx context.Context) ([]Workspace, error) {
+	workspaces := make([]Workspace, 0)
+
+	for _, namespace := range c.namespaces {
+		if namespace == "" {
+			return nil, errors.New("floor namespace must not be empty")
 		}
 
-		workspaces = append(workspaces, ws)
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(TerraformGVK.GroupVersion().WithKind(TerraformGVK.Kind + "List"))
+
+		if err := c.k.List(ctx, list, client.InNamespace(namespace)); err != nil {
+			return nil, fmt.Errorf("listing Terraform objects in %q: %w", namespace, err)
+		}
+
+		for i := range list.Items {
+			ws, err := c.toWorkspace(ctx, &list.Items[i])
+			if err != nil {
+				return nil, err
+			}
+
+			workspaces = append(workspaces, ws)
+		}
 	}
 
 	return workspaces, nil
@@ -68,14 +83,36 @@ func (c *Client) Get(ctx context.Context, name string) (Workspace, error) {
 
 // Workspace returns the raw unstructured Terraform object for name.
 func (c *Client) Workspace(ctx context.Context, name string) (*unstructured.Unstructured, error) {
+	key, err := c.workspaceKey(name)
+	if err != nil {
+		return nil, err
+	}
+
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(TerraformGVK)
 
-	if err := c.k.Get(ctx, types.NamespacedName{Namespace: c.namespace, Name: name}, obj); err != nil {
+	if err := c.k.Get(ctx, key, obj); err != nil {
 		return nil, fmt.Errorf("getting Terraform object %q: %w", name, err)
 	}
 
 	return obj, nil
+}
+
+func (c *Client) workspaceKey(name string) (types.NamespacedName, error) {
+	namespace := c.namespace
+	if ns, objectName, qualified := strings.Cut(name, "/"); qualified {
+		namespace, name = ns, objectName
+	}
+
+	if namespace == "" || !slices.Contains(c.namespaces, namespace) {
+		return types.NamespacedName{}, fmt.Errorf("namespace %q is not configured on this floor", namespace)
+	}
+
+	if name == "" || strings.Contains(name, "/") {
+		return types.NamespacedName{}, fmt.Errorf("invalid workspace name %q", name)
+	}
+
+	return types.NamespacedName{Namespace: namespace, Name: name}, nil
 }
 
 // ValidateApproval checks whether planID may be approved against ws,
@@ -159,10 +196,15 @@ func (c *Client) SetDestroy(ctx context.Context, name string) error {
 // mergePatch applies a field-targeted JSON merge patch to the named
 // Terraform object.
 func (c *Client) mergePatch(ctx context.Context, name, patch string) error {
+	key, err := c.workspaceKey(name)
+	if err != nil {
+		return err
+	}
+
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(TerraformGVK)
-	obj.SetName(name)
-	obj.SetNamespace(c.namespace)
+	obj.SetName(key.Name)
+	obj.SetNamespace(key.Namespace)
 
 	if err := c.k.Patch(ctx, obj, client.RawPatch(types.MergePatchType, []byte(patch)), client.FieldOwner("floor-api")); err != nil {
 		return fmt.Errorf("patching Terraform object %q with %s: %w", name, patch, err)
@@ -177,6 +219,9 @@ func (c *Client) toWorkspace(ctx context.Context, obj *unstructured.Unstructured
 	ws := Workspace{
 		Name:      obj.GetName(),
 		Namespace: obj.GetNamespace(),
+	}
+	if ws.Namespace != c.namespace {
+		ws.Name = ws.Namespace + "/" + ws.Name
 	}
 
 	ws.Path, _, _ = unstructured.NestedString(obj.Object, "spec", "path")
